@@ -1,0 +1,150 @@
+name: reusable-publish-package-repo
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        required: false
+        type: string
+        default: ">=1.25.8"
+      gcp-project:
+        required: true
+        type: string
+      workload-identity-provider:
+        required: true
+        type: string
+      service-account:
+        required: true
+        type: string
+      gcs-bucket:
+        required: true
+        type: string
+      gcs-bucket-prefix:
+        required: false
+        type: string
+        default: ""
+      aptly-gpg-key-id:
+        required: true
+        type: string
+      aptly-gpg-private-key-secret:
+        required: false
+        type: string
+        default: "aptly-gpg-private-key"
+      aptly-gpg-passphrase-secret:
+        required: false
+        type: string
+        default: "aptly-gpg-passphrase"
+      aptly-distributions:
+        required: false
+        type: string
+        default: "bookworm"
+      aptly-component:
+        required: false
+        type: string
+        default: "main"
+      aptly-architectures:
+        required: false
+        type: string
+        default: "amd64,arm64"
+      aptly-publish-prefix:
+        required: false
+        type: string
+        default: "."
+      aptly-origin:
+        required: false
+        type: string
+        default: "libops"
+      aptly-label:
+        required: false
+        type: string
+        default: ""
+      aptly-public-key-name:
+        required: false
+        type: string
+        default: ""
+      rpm-repository-path:
+        required: false
+        type: string
+        default: "rpm"
+      dist-dir:
+        required: false
+        type: string
+        default: "dist"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish-package-repo:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+
+      - name: Checkout Publishing Workflows
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: libops/terraform-linux-packages
+          ref: main
+          path: .libops-packages
+
+      - name: Set up Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --skip=publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_REPO }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.workload-identity-provider }}
+          service_account: ${{ inputs.service-account }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install Package Repository Tooling
+        run: sudo apt-get update && sudo apt-get install -y aptly createrepo-c gnupg
+
+      - name: Publish Linux package repository
+        shell: bash
+        env:
+          GCLOUD_PROJECT: ${{ inputs.gcp-project }}
+          GCS_BUCKET: ${{ inputs.gcs-bucket }}
+          GCS_BUCKET_PREFIX: ${{ inputs.gcs-bucket-prefix }}
+          PACKAGE_NAME: ${{ github.event.repository.name }}
+          APTLY_GPG_KEY_ID: ${{ inputs.aptly-gpg-key-id }}
+          APTLY_GPG_PRIVATE_KEY_SECRET: ${{ inputs.aptly-gpg-private-key-secret }}
+          APTLY_GPG_PASSPHRASE_SECRET: ${{ inputs.aptly-gpg-passphrase-secret }}
+          APTLY_DISTRIBUTIONS: ${{ inputs.aptly-distributions }}
+          APTLY_COMPONENT: ${{ inputs.aptly-component }}
+          APTLY_ARCHITECTURES: ${{ inputs.aptly-architectures }}
+          APTLY_PUBLISH_PREFIX: ${{ inputs.aptly-publish-prefix }}
+          APTLY_ORIGIN: ${{ inputs.aptly-origin }}
+          APTLY_LABEL_INPUT: ${{ inputs.aptly-label }}
+          APTLY_PUBLIC_KEY_NAME_INPUT: ${{ inputs.aptly-public-key-name }}
+          RPM_REPOSITORY_PATH: ${{ inputs.rpm-repository-path }}
+          DIST_DIR: ${{ github.workspace }}/${{ inputs.dist-dir }}
+          PACKAGE_REPO_STAGE_DIR: ${{ runner.temp }}/package-repository
+          APTLY_ROOT_DIR: ${{ runner.temp }}/aptly
+          GNUPGHOME: ${{ runner.temp }}/gnupg
+        run: |
+          set -euo pipefail
+          if [ -n "${APTLY_LABEL_INPUT:-}" ]; then
+            export APTLY_LABEL="$APTLY_LABEL_INPUT"
+          fi
+          if [ -n "${APTLY_PUBLIC_KEY_NAME_INPUT:-}" ]; then
+            export APTLY_PUBLIC_KEY_NAME="$APTLY_PUBLIC_KEY_NAME_INPUT"
+          fi
+          /bin/bash "${GITHUB_WORKSPACE}/.libops-packages/scripts/publish-package-repo.sh"

@@ -1,0 +1,125 @@
+name: reusable-goreleaser
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        required: false
+        type: string
+        default: ">=1.25.8"
+      goreleaser-args:
+        required: false
+        type: string
+        default: "release --clean"
+      publish-package-repo:
+        required: false
+        type: boolean
+        default: false
+      package-name:
+        required: false
+        type: string
+        default: ""
+      package-repo-prefix:
+        required: false
+        type: string
+        default: ""
+      package-repo-label:
+        required: false
+        type: string
+        default: ""
+      package-public-key-name:
+        required: false
+        type: string
+        default: ""
+      gcp-project:
+        required: false
+        type: string
+        default: ""
+      workload-identity-provider:
+        required: false
+        type: string
+        default: ""
+      service-account:
+        required: false
+        type: string
+        default: ""
+      gcs-bucket:
+        required: false
+        type: string
+        default: ""
+      aptly-gpg-key-id:
+        required: false
+        type: string
+        default: ""
+      aptly-gpg-private-key-secret:
+        required: false
+        type: string
+        default: "aptly-gpg-private-key"
+      aptly-gpg-passphrase-secret:
+        required: false
+        type: string
+        default: "aptly-gpg-passphrase"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: ${{ inputs.goreleaser-args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_REPO }}
+
+      - name: Authenticate to Google Cloud
+        if: ${{ inputs.publish-package-repo }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.workload-identity-provider }}
+          service_account: ${{ inputs.service-account }}
+          create_credentials_file: true
+
+      - name: Checkout Package Publisher
+        if: ${{ inputs.publish-package-repo }}
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: libops/terraform-linux-packages
+          ref: main
+          path: .libops-packages
+
+      - name: Publish Linux package repository
+        if: ${{ inputs.publish-package-repo }}
+        shell: bash
+        working-directory: .libops-packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GCLOUD_PROJECT: ${{ inputs.gcp-project }}
+          GCS_BUCKET: ${{ inputs.gcs-bucket }}
+          APTLY_GPG_KEY_ID: ${{ inputs.aptly-gpg-key-id }}
+          APTLY_GPG_PRIVATE_KEY_SECRET: ${{ inputs.aptly-gpg-private-key-secret }}
+          APTLY_GPG_PASSPHRASE_SECRET: ${{ inputs.aptly-gpg-passphrase-secret }}
+        run: |
+          set -euo pipefail
+          make package \
+            GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
+            PACKAGE_NAME="${{ inputs.package-name }}" \
+            GCS_BUCKET_PREFIX="${{ inputs.package-repo-prefix }}" \
+            APTLY_LABEL="${{ inputs.package-repo-label }}" \
+            APTLY_PUBLIC_KEY_NAME="${{ inputs.package-public-key-name }}" \
+            RELEASE_VERSION="${GITHUB_REF_NAME}"

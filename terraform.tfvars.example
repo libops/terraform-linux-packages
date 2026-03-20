@@ -1,0 +1,16 @@
+github_repositories = [
+  "libops/sitectl",
+  "libops/sitectl-drupal",
+  "libops/sitectl-isle",
+  "libops/sitectl-libops",
+]
+
+github_actors = [
+  "joe",
+]
+
+package_domain    = "packages.libops.io"
+dns_zone_name     = "packages-libops-io"
+dns_zone_dns_name = "packages.libops.io."
+bucket_name       = "libops-linux-packages"
+aptly_gpg_key_id  = "YOUR-APTLY-GPG-KEY-ID"
