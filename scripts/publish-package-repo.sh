@@ -10,6 +10,10 @@ shopt -s nullglob
 
 PACKAGE_NAME="${PACKAGE_NAME:-${GITHUB_REPOSITORY:-}}"
 PACKAGE_NAME="${PACKAGE_NAME##*/}"
+if [ -z "$PACKAGE_NAME" ]; then
+  echo "PACKAGE_NAME could not be determined"
+  exit 1
+fi
 APTLY_DISTRIBUTIONS="${APTLY_DISTRIBUTIONS:-bookworm}"
 APTLY_COMPONENT="${APTLY_COMPONENT:-main}"
 APTLY_ARCHITECTURES="${APTLY_ARCHITECTURES:-amd64,arm64}"
@@ -105,12 +109,40 @@ PY
   done
 }
 
+package_file_name() {
+  local package_file="$1"
+
+  case "$package_file" in
+    *.deb)
+      dpkg-deb -f "$package_file" Package 2>/dev/null || true
+      ;;
+    *.rpm)
+      rpm -qp --qf '%{NAME}\n' "$package_file" 2>/dev/null || true
+      ;;
+  esac
+}
+
+stage_package_artifacts() {
+  find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -exec cp {} "$PACKAGE_REPO_STAGE_DIR"/ \;
+}
+
+prune_stage_package_history() {
+  while IFS= read -r -d '' staged_package; do
+    if [ "$(package_file_name "$staged_package")" = "$PACKAGE_NAME" ]; then
+      rm -f "$staged_package"
+    fi
+  done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
+}
+
 acquire_lock
 
 gcloud storage rsync \
   --recursive \
   "$destination" \
   "$PACKAGE_REPO_STAGE_DIR" >/dev/null 2>&1 || true
+
+prune_stage_package_history
+stage_package_artifacts
 
 mkdir -p "$MERGED_DIST_DIR"
 find "$PACKAGE_REPO_STAGE_DIR" -type f \( -name "*.deb" -o -name "*.rpm" \) -exec cp {} "$MERGED_DIST_DIR"/ \;
@@ -157,7 +189,7 @@ if [ ${#deb_packages[@]} -gt 0 ]; then
     exit 1
   fi
 
-  cat >"$APTLY_ROOT_DIR/aptly.conf" <<EOF
+  cat >"$APTLY_ROOT_DIR/aptly.conf" <<APTLYCONF
 {
   "rootDir": "$APTLY_ROOT_DIR",
   "architectures": [$architecture_json],
@@ -165,7 +197,7 @@ if [ ${#deb_packages[@]} -gt 0 ]; then
   "downloadConcurrency": 4,
   "downloadSpeedLimit": 0
 }
-EOF
+APTLYCONF
 
   passphrase_file="$APTLY_ROOT_DIR/gpg-passphrase"
   cp "$passphrase_file_secret" "$passphrase_file"
@@ -197,6 +229,10 @@ EOF
       "$APTLY_PUBLISH_PREFIX"
   done
 
+  while IFS= read -r existing_public_path; do
+    rm -rf "$PACKAGE_REPO_STAGE_DIR/${existing_public_path#"$APTLY_ROOT_DIR/public"/}"
+  done < <(find "$APTLY_ROOT_DIR/public" -mindepth 1 -maxdepth 1)
+
   cp -R "$APTLY_ROOT_DIR/public/." "$PACKAGE_REPO_STAGE_DIR/"
 fi
 
@@ -205,6 +241,7 @@ gpg --batch --yes --output "$PACKAGE_REPO_STAGE_DIR/${APTLY_PUBLIC_KEY_NAME}.gpg
 
 if [ ${#rpm_packages[@]} -gt 0 ]; then
   rpm_dir="$PACKAGE_REPO_STAGE_DIR/${RPM_REPOSITORY_PATH#/}"
+  rm -rf "$rpm_dir"
   mkdir -p "$rpm_dir"
   cp "${rpm_packages[@]}" "$rpm_dir/"
   createrepo_c --update "$rpm_dir"
