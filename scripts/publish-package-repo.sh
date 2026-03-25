@@ -230,10 +230,57 @@ APTLYCONF
   done
 
   while IFS= read -r existing_public_path; do
-    rm -rf "$PACKAGE_REPO_STAGE_DIR/${existing_public_path#"$APTLY_ROOT_DIR/public"/}"
+    rm -rf "${PACKAGE_REPO_STAGE_DIR:?}/${existing_public_path#"$APTLY_ROOT_DIR/public"/}"
   done < <(find "$APTLY_ROOT_DIR/public" -mindepth 1 -maxdepth 1)
 
   cp -R "$APTLY_ROOT_DIR/public/." "$PACKAGE_REPO_STAGE_DIR/"
+
+  # Generate flat repository (supports "deb URL ./" apt sources, distribution-agnostic)
+  flat_packages_file="$PACKAGE_REPO_STAGE_DIR/Packages"
+  (cd "$PACKAGE_REPO_STAGE_DIR" && dpkg-scanpackages --multiversion pool 2>/dev/null) \
+    > "$flat_packages_file"
+  gzip -k -f "$flat_packages_file"
+
+  flat_release_file="$PACKAGE_REPO_STAGE_DIR/Release"
+  {
+    echo "Origin: ${APTLY_ORIGIN}"
+    echo "Label: ${APTLY_LABEL}"
+    echo "Architectures: ${APTLY_ARCHITECTURES//,/ }"
+    echo "Components: ${APTLY_COMPONENT}"
+    echo "Date: $(date -Ru)"
+    echo "MD5Sum:"
+    for _f in Packages Packages.gz; do
+      [ -f "$PACKAGE_REPO_STAGE_DIR/$_f" ] || continue
+      printf " %s %16d %s\n" \
+        "$(md5sum "$PACKAGE_REPO_STAGE_DIR/$_f" | cut -d' ' -f1)" \
+        "$(stat -c%s "$PACKAGE_REPO_STAGE_DIR/$_f")" \
+        "$_f"
+    done
+    echo "SHA256:"
+    for _f in Packages Packages.gz; do
+      [ -f "$PACKAGE_REPO_STAGE_DIR/$_f" ] || continue
+      printf " %s %16d %s\n" \
+        "$(sha256sum "$PACKAGE_REPO_STAGE_DIR/$_f" | cut -d' ' -f1)" \
+        "$(stat -c%s "$PACKAGE_REPO_STAGE_DIR/$_f")" \
+        "$_f"
+    done
+  } > "$flat_release_file"
+
+  gpg --batch --yes \
+    --passphrase-file "$passphrase_file" \
+    --pinentry-mode loopback \
+    -u "$APTLY_GPG_KEY_ID" \
+    --armor --detach-sign \
+    --output "${flat_release_file}.gpg" \
+    "$flat_release_file"
+
+  gpg --batch --yes \
+    --passphrase-file "$passphrase_file" \
+    --pinentry-mode loopback \
+    -u "$APTLY_GPG_KEY_ID" \
+    --clearsign \
+    --output "$PACKAGE_REPO_STAGE_DIR/InRelease" \
+    "$flat_release_file"
 fi
 
 gpg --batch --yes --armor --export "$APTLY_GPG_KEY_ID" >"$PACKAGE_REPO_STAGE_DIR/${APTLY_PUBLIC_KEY_NAME}.asc"
