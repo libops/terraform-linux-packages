@@ -11,7 +11,7 @@ on:
 
 jobs:
   run:
-    uses: libops/.github/.github/workflows/build-push.yaml@main
+    uses: libops/.github/.github/workflows/build-push.yaml@f39fff4fbd5096221d705143e88e5942f5d9a604 # main
     permissions:
       contents: read
       packages: write
