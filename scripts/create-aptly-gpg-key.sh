@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -euxo pipefail
 
 : "${GCLOUD_PROJECT:?GCLOUD_PROJECT is required}"
 : "${APTLY_GPG_NAME:?APTLY_GPG_NAME is required}"
@@ -11,6 +11,7 @@ APTLY_GPG_PASSPHRASE_SECRET="${APTLY_GPG_PASSPHRASE_SECRET:-aptly-gpg-passphrase
 APTLY_GPG_KEY_EXPIRE="${APTLY_GPG_KEY_EXPIRE:-2y}"
 APTLY_GPG_ARTIFACTS_DIR="${APTLY_GPG_ARTIFACTS_DIR:-/workspace/terraform-linux-packages/.out/gpg}"
 
+set +x
 if [ -z "${APTLY_GPG_PASSPHRASE:-}" ]; then
   if [ -t 0 ]; then
     printf 'Enter package signing key passphrase: ' >&2
@@ -22,6 +23,7 @@ if [ -z "${APTLY_GPG_PASSPHRASE:-}" ]; then
 fi
 
 : "${APTLY_GPG_PASSPHRASE:?APTLY_GPG_PASSPHRASE is required via stdin or environment}"
+set -x
 
 GNUPGHOME="$(mktemp -d)"
 KEY_PARAMS="$(mktemp)"
@@ -37,6 +39,7 @@ trap cleanup EXIT
 chmod 700 "$GNUPGHOME"
 export GNUPGHOME
 
+set +x
 printf '%s' "$APTLY_GPG_PASSPHRASE" >"$PASSPHRASE_FILE"
 
 cat >"$KEY_PARAMS" <<EOF
@@ -50,6 +53,7 @@ Expire-Date: ${APTLY_GPG_KEY_EXPIRE}
 Passphrase: ${APTLY_GPG_PASSPHRASE}
 %commit
 EOF
+set -x
 
 gpg --batch --generate-key "$KEY_PARAMS"
 
@@ -64,10 +68,12 @@ fi
 gpg --batch --pinentry-mode loopback --passphrase-file "$PASSPHRASE_FILE" \
   --armor --export-secret-keys "$KEY_ID" >"$PRIVATE_KEY_FILE"
 
+set +x
 printf '%s' "$APTLY_GPG_PASSPHRASE" | gcloud secrets versions add \
   "$APTLY_GPG_PASSPHRASE_SECRET" \
   --project="$GCLOUD_PROJECT" \
   --data-file=-
+set -x
 
 gcloud secrets versions add \
   "$APTLY_GPG_PRIVATE_KEY_SECRET" \

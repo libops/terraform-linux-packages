@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -Eeuxo pipefail
 shopt -s nullglob
 
 : "${DIST_DIR:?DIST_DIR is required}"
@@ -31,9 +31,34 @@ MERGED_DIST_DIR="$(mktemp -d)"
 LOCK_TIMEOUT_SECONDS="${LOCK_TIMEOUT_SECONDS:-600}"
 LOCK_POLL_SECONDS="${LOCK_POLL_SECONDS:-5}"
 LOCK_OWNER="${LOCK_OWNER:-$(hostname)-$$-$(date -u +%s)}"
+current_step="initializing"
+private_key_file=""
+passphrase_file_secret=""
+lock_error_file=""
+
+log_step() {
+  current_step="$1"
+  printf '==> %s\n' "$current_step"
+}
+
+on_error() {
+  local status=$?
+  printf 'ERROR: %s failed at %s:%s while running: %s\n' \
+    "$current_step" "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}" "${BASH_LINENO[0]:-?}" "$BASH_COMMAND" >&2
+  exit "$status"
+}
 
 cleanup() {
   release_lock
+  if [ -n "${private_key_file:-}" ]; then
+    rm -f "$private_key_file"
+  fi
+  if [ -n "${passphrase_file_secret:-}" ]; then
+    rm -f "$passphrase_file_secret"
+  fi
+  if [ -n "${lock_error_file:-}" ]; then
+    rm -f "$lock_error_file"
+  fi
   if [[ "${PACKAGE_REPO_STAGE_DIR}" == /tmp/* ]]; then
     rm -rf "$PACKAGE_REPO_STAGE_DIR"
   fi
@@ -47,8 +72,10 @@ cleanup() {
     rm -rf "$MERGED_DIST_DIR"
   fi
 }
+trap on_error ERR
 trap cleanup EXIT
 
+log_step "Preparing package repository workspace"
 mkdir -p "$PACKAGE_REPO_STAGE_DIR" "$APTLY_ROOT_DIR" "$GNUPGHOME"
 chmod 700 "$GNUPGHOME"
 
@@ -58,9 +85,10 @@ if [ -n "${GCS_BUCKET_PREFIX:-}" ]; then
 fi
 lock_path="${destination%/}/.publish.lock"
 lock_generation_file="$(mktemp)"
+lock_error_file="$(mktemp)"
 
 describe_lock() {
-  gcloud storage objects describe "$lock_path" --format="value(generation,update_time)" 2>/dev/null
+  gcloud storage objects describe "$lock_path" --format="value(generation,update_time)" 2>/dev/null || true
 }
 
 release_lock() {
@@ -76,11 +104,18 @@ release_lock() {
 
 acquire_lock() {
   local details generation update_time age now
+  log_step "Acquiring publish lock at $lock_path"
   while true; do
-    if printf '%s\n' "$LOCK_OWNER" | gcloud storage cp - "$lock_path" --if-generation-match=0 >/dev/null 2>&1; then
+    : >"$lock_error_file"
+    if printf '%s\n' "$LOCK_OWNER" | gcloud storage cp - "$lock_path" --if-generation-match=0 >/dev/null 2>"$lock_error_file"; then
       details="$(describe_lock)"
       generation="$(printf '%s\n' "$details" | awk '{print $1}')"
+      if [ -z "$generation" ]; then
+        printf 'Acquired publish lock at %s, but could not resolve its generation\n' "$lock_path" >&2
+        return 1
+      fi
       printf '%s' "$generation" >"$lock_generation_file"
+      printf 'Acquired publish lock generation %s\n' "$generation"
       return 0
     fi
 
@@ -99,10 +134,18 @@ print(max(0, now - int(updated.timestamp())))
 PY
 )"
       if [ "$age" -ge "$LOCK_TIMEOUT_SECONDS" ]; then
+        printf 'Removing stale publish lock generation %s at %s\n' "$generation" "$lock_path"
         gcloud storage rm "$lock_path" --if-generation-match="$generation" >/dev/null 2>&1 || true
         sleep 1
         continue
       fi
+      printf 'Publish lock is held by another process; waiting %ss (age %ss, timeout %ss)\n' "$LOCK_POLL_SECONDS" "$age" "$LOCK_TIMEOUT_SECONDS"
+    else
+      printf 'Unable to create or inspect publish lock at %s\n' "$lock_path" >&2
+      if [ -s "$lock_error_file" ]; then
+        cat "$lock_error_file" >&2
+      fi
+      return 1
     fi
 
     sleep "$LOCK_POLL_SECONDS"
@@ -219,15 +262,20 @@ prune_stage_release_history() {
 
 acquire_lock
 
+log_step "Syncing existing package repository from $destination"
 gcloud storage rsync \
   --recursive \
   "$destination" \
-  "$PACKAGE_REPO_STAGE_DIR" >/dev/null 2>&1 || true
+  "$PACKAGE_REPO_STAGE_DIR" || {
+    printf 'No existing repository state was synced from %s; continuing with current release artifacts.\n' "$destination" >&2
+  }
 
+log_step "Pruning stale package artifacts"
 prune_stage_release_history
 prune_stage_package_history
 stage_package_artifacts
 
+log_step "Collecting package artifacts"
 mkdir -p "$MERGED_DIST_DIR"
 find "$PACKAGE_REPO_STAGE_DIR" -type f \( -name "*.deb" -o -name "*.rpm" \) -exec cp {} "$MERGED_DIST_DIR"/ \;
 find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -exec cp {} "$MERGED_DIST_DIR"/ \;
@@ -243,6 +291,7 @@ fi
 private_key_file="$(mktemp "${RUNNER_TEMP:-/tmp}/aptly-private-key.XXXXXX")"
 passphrase_file_secret="$(mktemp "${RUNNER_TEMP:-/tmp}/aptly-passphrase.XXXXXX")"
 
+log_step "Loading aptly GPG key from Secret Manager"
 gcloud secrets versions access latest \
   --project="$GCLOUD_PROJECT" \
   --secret="$APTLY_GPG_PRIVATE_KEY_SECRET" \
@@ -256,6 +305,7 @@ gcloud secrets versions access latest \
 gpg --batch --import "$private_key_file"
 
 if [ ${#deb_packages[@]} -gt 0 ]; then
+  log_step "Publishing APT repository"
   IFS=',' read -r -a architecture_list <<<"$APTLY_ARCHITECTURES"
   architecture_json=""
   for architecture in "${architecture_list[@]}"; do
@@ -321,7 +371,7 @@ APTLYCONF
 
   # Generate flat repository (supports "deb URL ./" apt sources, distribution-agnostic)
   flat_packages_file="$PACKAGE_REPO_STAGE_DIR/Packages"
-  (cd "$PACKAGE_REPO_STAGE_DIR" && dpkg-scanpackages --multiversion pool 2>/dev/null) \
+  (cd "$PACKAGE_REPO_STAGE_DIR" && dpkg-scanpackages --multiversion pool) \
     > "$flat_packages_file"
   gzip -k -f "$flat_packages_file"
 
@@ -367,26 +417,34 @@ APTLYCONF
     "$flat_release_file"
 fi
 
+log_step "Exporting repository public key"
 gpg --batch --yes --armor --export "$APTLY_GPG_KEY_ID" >"$PACKAGE_REPO_STAGE_DIR/${APTLY_PUBLIC_KEY_NAME}.asc"
 gpg --batch --yes --output "$PACKAGE_REPO_STAGE_DIR/${APTLY_PUBLIC_KEY_NAME}.gpg" --export "$APTLY_GPG_KEY_ID"
 
 if [ ${#rpm_packages[@]} -gt 0 ]; then
+  log_step "Publishing RPM repository"
   rpm_dir="$PACKAGE_REPO_STAGE_DIR/${RPM_REPOSITORY_PATH#/}"
   rm -rf "$rpm_dir"
   mkdir -p "$rpm_dir"
   cp "${rpm_packages[@]}" "$rpm_dir/"
   createrepo_c --update "$rpm_dir"
-  gpg --batch --yes --armor --detach-sign \
+  gpg --batch --yes \
+    --passphrase-file "$passphrase_file_secret" \
+    --pinentry-mode loopback \
+    -u "$APTLY_GPG_KEY_ID" \
+    --armor --detach-sign \
     --output "$rpm_dir/repodata/repomd.xml.asc" \
     "$rpm_dir/repodata/repomd.xml"
 fi
 
+log_step "Uploading package repository to $destination"
 gcloud storage rsync \
   --recursive \
   --delete-unmatched-destination-objects \
   "$PACKAGE_REPO_STAGE_DIR" \
   "$destination"
 
+log_step "Updating cache-control metadata"
 while IFS= read -r -d '' staged_file; do
   relative_path="${staged_file#"$PACKAGE_REPO_STAGE_DIR"/}"
   object_path="${destination%/}/${relative_path}"
@@ -400,3 +458,5 @@ while IFS= read -r -d '' staged_file; do
 
   gcloud storage objects update "$object_path" --cache-control="$cache_control" >/dev/null
 done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f -print0)
+
+printf 'Published package repository to %s\n' "$destination"

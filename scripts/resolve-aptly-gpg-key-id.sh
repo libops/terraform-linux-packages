@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -euxo pipefail
 
 : "${GCLOUD_PROJECT:?GCLOUD_PROJECT is required}"
 

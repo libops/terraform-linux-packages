@@ -115,7 +115,7 @@ jobs:
           APTLY_GPG_PRIVATE_KEY_SECRET: ${{ inputs.aptly-gpg-private-key-secret }}
           APTLY_GPG_PASSPHRASE_SECRET: ${{ inputs.aptly-gpg-passphrase-secret }}
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           make package \
             GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
             PACKAGE_NAME="${{ inputs.package-name }}" \

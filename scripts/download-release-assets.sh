@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -euxo pipefail
 
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${RELEASE_VERSION:?RELEASE_VERSION is required}"

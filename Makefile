@@ -1,3 +1,6 @@
+SHELL := /bin/bash
+.SHELLFLAGS := -xeo pipefail -c
+
 .PHONY: package download-release-assets publish-package-repo package-tools-image package-tools-image-local create-aptly-gpg-key print-aptly-gpg-key-id sync-aptly-gpg-key-id
 
 ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
