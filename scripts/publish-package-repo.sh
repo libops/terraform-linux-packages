@@ -111,13 +111,33 @@ PY
 
 package_file_name() {
   local package_file="$1"
+  local package_name=""
+  local file_name file_stem
 
   case "$package_file" in
     *.deb)
-      dpkg-deb -f "$package_file" Package 2>/dev/null || true
+      package_name="$(dpkg-deb -f "$package_file" Package 2>/dev/null || true)"
       ;;
     *.rpm)
-      rpm -qp --qf '%{NAME}\n' "$package_file" 2>/dev/null || true
+      package_name="$(rpm -qp --qf '%{NAME}\n' "$package_file" 2>/dev/null || true)"
+      ;;
+  esac
+
+  if [ -n "$package_name" ]; then
+    printf '%s\n' "$package_name"
+    return 0
+  fi
+
+  file_name="${package_file##*/}"
+  case "$file_name" in
+    *.deb)
+      printf '%s\n' "${file_name%%_*}"
+      ;;
+    *.rpm)
+      file_stem="${file_name%.rpm}"
+      file_stem="${file_stem%.*}"
+      file_stem="${file_stem%-*}"
+      printf '%s\n' "${file_stem%-[0-9]*}"
       ;;
   esac
 }
@@ -126,12 +146,75 @@ stage_package_artifacts() {
   find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -exec cp {} "$PACKAGE_REPO_STAGE_DIR"/ \;
 }
 
+current_package_names=()
+
+append_current_package_name() {
+  local package_name="$1"
+  local current_package_name
+
+  [ -n "$package_name" ] || return 0
+
+  for current_package_name in "${current_package_names[@]}"; do
+    if [ "$current_package_name" = "$package_name" ]; then
+      return 0
+    fi
+  done
+
+  current_package_names+=("$package_name")
+}
+
+collect_current_package_names() {
+  local package_file
+
+  current_package_names=()
+
+  while IFS= read -r -d '' package_file; do
+    append_current_package_name "$(package_file_name "$package_file")"
+  done < <(find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
+
+  if [ ${#current_package_names[@]} -eq 0 ]; then
+    append_current_package_name "$PACKAGE_NAME"
+  fi
+}
+
+is_current_package_name() {
+  local package_name="$1"
+  local current_package_name
+
+  [ -n "$package_name" ] || return 1
+
+  for current_package_name in "${current_package_names[@]}"; do
+    if [ "$current_package_name" = "$package_name" ]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 prune_stage_package_history() {
+  local staged_package package_name
+
+  collect_current_package_names
+
   while IFS= read -r -d '' staged_package; do
-    if [ "$(package_file_name "$staged_package")" = "$PACKAGE_NAME" ]; then
+    package_name="$(package_file_name "$staged_package")"
+    if is_current_package_name "$package_name"; then
       rm -f "$staged_package"
     fi
   done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
+}
+
+prune_stage_release_history() {
+  local entry release_name
+
+  for entry in "$PACKAGE_REPO_STAGE_DIR"/*; do
+    [ -d "$entry" ] || continue
+    release_name="${entry##*/}"
+    if [[ "$release_name" =~ ^v?[0-9]+(\.[0-9]+){1,2}([-.+~][A-Za-z0-9._~+-]+)?$ ]]; then
+      rm -rf "$entry"
+    fi
+  done
 }
 
 acquire_lock
@@ -141,6 +224,7 @@ gcloud storage rsync \
   "$destination" \
   "$PACKAGE_REPO_STAGE_DIR" >/dev/null 2>&1 || true
 
+prune_stage_release_history
 prune_stage_package_history
 stage_package_artifacts
 
