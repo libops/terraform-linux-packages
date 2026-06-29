@@ -32,6 +32,7 @@ PACKAGE_REPO_STAGE_DIR="${PACKAGE_REPO_STAGE_DIR:-$(mktemp -d)}"
 APTLY_ROOT_DIR="${APTLY_ROOT_DIR:-$(mktemp -d)}"
 GNUPGHOME="${GNUPGHOME:-$(mktemp -d)}"
 MERGED_DIST_DIR="$(mktemp -d)"
+PACKAGE_REPO_ASSET_DIR="$(mktemp -d)"
 LOCK_TIMEOUT_SECONDS="${LOCK_TIMEOUT_SECONDS:-600}"
 LOCK_POLL_SECONDS="${LOCK_POLL_SECONDS:-5}"
 LOCK_OWNER="${LOCK_OWNER:-$(hostname)-$$-$(date -u +%s)}"
@@ -74,6 +75,9 @@ cleanup() {
   fi
   if [[ "${MERGED_DIST_DIR}" == /tmp/* ]]; then
     rm -rf "$MERGED_DIST_DIR"
+  fi
+  if [[ "${PACKAGE_REPO_ASSET_DIR}" == /tmp/* ]]; then
+    rm -rf "$PACKAGE_REPO_ASSET_DIR"
   fi
 }
 trap on_error ERR
@@ -252,6 +256,24 @@ upload_deferred_repository_metadata() {
   fi
 
   rm -f "$ordered_metadata_file"
+}
+
+stage_repository_assets_for_upload() {
+  local staged_file relative_path asset_file asset_dir
+
+  rm -rf "${PACKAGE_REPO_ASSET_DIR:?}/"*
+
+  while IFS= read -r -d '' staged_file; do
+    relative_path="${staged_file#"$PACKAGE_REPO_STAGE_DIR"/}"
+    if [ "$relative_path" = ".publish.lock" ] || is_deferred_repository_metadata_path "$relative_path"; then
+      continue
+    fi
+
+    asset_file="$PACKAGE_REPO_ASSET_DIR/$relative_path"
+    asset_dir="${asset_file%/*}"
+    mkdir -p "$asset_dir"
+    cp "$staged_file" "$asset_file"
+  done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f -print0)
 }
 
 write_flat_by_hash_indexes() {
@@ -605,13 +627,14 @@ if [ ${#rpm_packages[@]} -gt 0 ]; then
     "$rpm_dir/repodata/repomd.xml"
 fi
 
+log_step "Staging package assets for upload"
+stage_repository_assets_for_upload
+
 log_step "Uploading package assets to $destination"
-mutable_metadata_exclude_regex='^[.]publish[.]lock$|(^|/)dists/|^(InRelease|Release|Release[.]gpg|Packages([.].*)?)$|(^|/)repodata/'
 gcloud storage rsync \
   --recursive \
-  --exclude="$mutable_metadata_exclude_regex" \
   --cache-control="$PACKAGE_ASSET_CACHE_CONTROL" \
-  "$PACKAGE_REPO_STAGE_DIR" \
+  "$PACKAGE_REPO_ASSET_DIR" \
   "$destination"
 
 log_step "Uploading repository metadata to $destination"
