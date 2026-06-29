@@ -205,7 +205,10 @@ resource "google_project_iam_custom_role" "cdn_cache_invalidator" {
   role_id     = "cdnCacheInvalidator"
   title       = "Cloud CDN Cache Invalidator"
   description = "Allows package publishers to invalidate Cloud CDN cache entries."
-  permissions = ["compute.urlMaps.invalidateCache"]
+  permissions = [
+    "compute.urlMaps.get",
+    "compute.urlMaps.invalidateCache",
+  ]
 
   depends_on = [google_project_service.service]
 }

@@ -97,7 +97,7 @@ make sync-aptly-gpg-key-id
 
 - The managed SSL certificate will stay in provisioning until the delegated package subdomain resolves to the created load balancer IP.
 - The bucket is public so `apt` and other package managers can fetch package metadata and artifacts without authentication.
-- This stack grants the GitHub service account bucket-level `roles/storage.objectAdmin` for syncing package repositories and a custom role with `compute.urlMaps.invalidateCache` for Cloud CDN invalidation.
+- This stack grants the GitHub service account bucket-level `roles/storage.objectAdmin` for syncing package repositories and a custom role with `compute.urlMaps.get` and `compute.urlMaps.invalidateCache` for Cloud CDN invalidation.
 - Cloud CDN uses origin cache headers. Package assets are uploaded as long-lived immutable objects, while mutable repository metadata is uploaded as `no-store`.
 - Terraform creates the Secret Manager secret containers, but it does not write the private key or passphrase into Terraform state.
 
