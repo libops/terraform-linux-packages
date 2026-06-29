@@ -194,6 +194,26 @@ resource "google_compute_backend_bucket" "packages" {
   name        = "packages-backend"
   bucket_name = google_storage_bucket.packages.name
   enable_cdn  = true
+
+  cdn_policy {
+    cache_mode = "USE_ORIGIN_HEADERS"
+  }
+}
+
+resource "google_project_iam_custom_role" "cdn_cache_invalidator" {
+  project     = local.project_id
+  role_id     = "cdnCacheInvalidator"
+  title       = "Cloud CDN Cache Invalidator"
+  description = "Allows package publishers to invalidate Cloud CDN cache entries."
+  permissions = ["compute.urlMaps.invalidateCache"]
+
+  depends_on = [google_project_service.service]
+}
+
+resource "google_project_iam_member" "github_cdn_cache_invalidator" {
+  project = local.project_id
+  role    = google_project_iam_custom_role.cdn_cache_invalidator.name
+  member  = "serviceAccount:${google_service_account.github.email}"
 }
 
 resource "google_compute_managed_ssl_certificate" "packages" {

@@ -24,6 +24,10 @@ APTLY_PUBLIC_KEY_NAME="${APTLY_PUBLIC_KEY_NAME:-${PACKAGE_NAME}-archive-keyring}
 APTLY_GPG_PRIVATE_KEY_SECRET="${APTLY_GPG_PRIVATE_KEY_SECRET:-aptly-gpg-private-key}"
 APTLY_GPG_PASSPHRASE_SECRET="${APTLY_GPG_PASSPHRASE_SECRET:-aptly-gpg-passphrase}"
 RPM_REPOSITORY_PATH="${RPM_REPOSITORY_PATH:-rpm}"
+PACKAGE_ASSET_CACHE_CONTROL="${PACKAGE_ASSET_CACHE_CONTROL:-public,max-age=31536000,immutable}"
+PACKAGE_METADATA_CACHE_CONTROL="${PACKAGE_METADATA_CACHE_CONTROL:-no-store,max-age=0}"
+CDN_URL_MAP="${CDN_URL_MAP:-packages-url-map}"
+CDN_INVALIDATE_CACHE="${CDN_INVALIDATE_CACHE:-true}"
 PACKAGE_REPO_STAGE_DIR="${PACKAGE_REPO_STAGE_DIR:-$(mktemp -d)}"
 APTLY_ROOT_DIR="${APTLY_ROOT_DIR:-$(mktemp -d)}"
 GNUPGHOME="${GNUPGHOME:-$(mktemp -d)}"
@@ -152,6 +156,167 @@ PY
   done
 }
 
+is_deferred_repository_metadata_path() {
+  local relative_path="$1"
+
+  case "$relative_path" in
+    dists/*|Packages|Packages.*|Release|Release.gpg|InRelease|*/repodata/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+metadata_upload_order() {
+  local relative_path="$1"
+
+  case "$relative_path" in
+    by-hash/*|*/by-hash/*)
+      printf '010\n'
+      ;;
+    */repodata/repomd.xml.asc)
+      printf '055\n'
+      ;;
+    */repodata/repomd.xml)
+      printf '050\n'
+      ;;
+    */repodata/*)
+      printf '020\n'
+      ;;
+    Packages|Packages.*|*/Packages|*/Packages.*)
+      printf '030\n'
+      ;;
+    Release.gpg|*/Release.gpg)
+      printf '045\n'
+      ;;
+    Release|*/Release)
+      printf '050\n'
+      ;;
+    InRelease|*/InRelease)
+      printf '060\n'
+      ;;
+    dists/*)
+      printf '025\n'
+      ;;
+    *)
+      printf '040\n'
+      ;;
+  esac
+}
+
+cache_control_for_path() {
+  local relative_path="$1"
+
+  case "$relative_path" in
+    *.deb|*.rpm|*.apk|by-hash/*|*/by-hash/*)
+      printf '%s\n' "$PACKAGE_ASSET_CACHE_CONTROL"
+      ;;
+    *)
+      printf '%s\n' "$PACKAGE_METADATA_CACHE_CONTROL"
+      ;;
+  esac
+}
+
+upload_staged_file() {
+  local relative_path="$1"
+  local staged_file object_path cache_control
+
+  staged_file="$PACKAGE_REPO_STAGE_DIR/$relative_path"
+  object_path="${destination%/}/$relative_path"
+  cache_control="$(cache_control_for_path "$relative_path")"
+
+  gcloud storage cp \
+    --cache-control="$cache_control" \
+    "$staged_file" \
+    "$object_path" \
+    >/dev/null
+}
+
+upload_deferred_repository_metadata() {
+  local staged_file relative_path ordered_metadata_file order
+
+  ordered_metadata_file="$(mktemp)"
+  while IFS= read -r -d '' staged_file; do
+    relative_path="${staged_file#"$PACKAGE_REPO_STAGE_DIR"/}"
+    if is_deferred_repository_metadata_path "$relative_path"; then
+      order="$(metadata_upload_order "$relative_path")"
+      printf '%s\t%s\n' "$order" "$relative_path" >>"$ordered_metadata_file"
+    fi
+  done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f -print0)
+
+  if [ -s "$ordered_metadata_file" ]; then
+    while IFS=$'\t' read -r _order relative_path; do
+      upload_staged_file "$relative_path"
+    done < <(sort "$ordered_metadata_file")
+  fi
+
+  rm -f "$ordered_metadata_file"
+}
+
+write_flat_by_hash_indexes() {
+  local index_name index_file digest target_dir
+
+  target_dir="$PACKAGE_REPO_STAGE_DIR/by-hash/SHA256"
+  mkdir -p "$target_dir"
+
+  for index_name in Packages Packages.gz; do
+    index_file="$PACKAGE_REPO_STAGE_DIR/$index_name"
+    [ -f "$index_file" ] || continue
+
+    digest="$(sha256sum "$index_file" | awk '{print $1}')"
+    cp "$index_file" "$target_dir/$digest"
+  done
+}
+
+cdn_invalidation_path() {
+  local prefix="${GCS_BUCKET_PREFIX:-}"
+
+  prefix="${prefix#/}"
+  prefix="${prefix%/}"
+
+  if [ -z "$prefix" ]; then
+    printf '/*\n'
+  else
+    printf '/%s/*\n' "$prefix"
+  fi
+}
+
+invalidate_cdn_cache() {
+  local cdn_path
+  local -a invalidate_args
+
+  case "$CDN_INVALIDATE_CACHE" in
+    false|False|FALSE|0|no|No|NO)
+      printf 'Skipping Cloud CDN cache invalidation because CDN_INVALIDATE_CACHE=%s\n' "$CDN_INVALIDATE_CACHE"
+      return 0
+      ;;
+  esac
+
+  if [ -z "$CDN_URL_MAP" ]; then
+    printf 'Skipping Cloud CDN cache invalidation because CDN_URL_MAP is empty\n'
+    return 0
+  fi
+
+  cdn_path="$(cdn_invalidation_path)"
+  invalidate_args=(
+    compute
+    url-maps
+    invalidate-cdn-cache
+    "$CDN_URL_MAP"
+    --global
+    --project="$GCLOUD_PROJECT"
+    --path="$cdn_path"
+  )
+
+  if [ -n "${CDN_INVALIDATE_HOST:-}" ]; then
+    invalidate_args+=(--host="$CDN_INVALIDATE_HOST")
+  fi
+
+  log_step "Invalidating Cloud CDN cache for $cdn_path"
+  gcloud "${invalidate_args[@]}"
+}
+
 package_file_name() {
   local package_file="$1"
   local package_name=""
@@ -269,6 +434,7 @@ gcloud storage rsync \
   "$PACKAGE_REPO_STAGE_DIR" || {
     printf 'No existing repository state was synced from %s; continuing with current release artifacts.\n' "$destination" >&2
   }
+rm -f "$PACKAGE_REPO_STAGE_DIR/.publish.lock"
 
 log_step "Pruning stale package artifacts"
 prune_stage_release_history
@@ -374,11 +540,13 @@ APTLYCONF
   (cd "$PACKAGE_REPO_STAGE_DIR" && dpkg-scanpackages --multiversion pool) \
     > "$flat_packages_file"
   gzip -k -f "$flat_packages_file"
+  write_flat_by_hash_indexes
 
   flat_release_file="$PACKAGE_REPO_STAGE_DIR/Release"
   {
     echo "Origin: ${APTLY_ORIGIN}"
     echo "Label: ${APTLY_LABEL}"
+    echo "Acquire-By-Hash: yes"
     echo "Architectures: ${APTLY_ARCHITECTURES//,/ }"
     echo "Components: ${APTLY_COMPONENT}"
     echo "Date: $(date -Ru)"
@@ -437,26 +605,27 @@ if [ ${#rpm_packages[@]} -gt 0 ]; then
     "$rpm_dir/repodata/repomd.xml"
 fi
 
-log_step "Uploading package repository to $destination"
+log_step "Uploading package assets to $destination"
+mutable_metadata_exclude_regex='^[.]publish[.]lock$|(^|/)dists/|^(InRelease|Release|Release[.]gpg|Packages([.].*)?)$|(^|/)repodata/'
 gcloud storage rsync \
   --recursive \
-  --delete-unmatched-destination-objects \
+  --exclude="$mutable_metadata_exclude_regex" \
+  --cache-control="$PACKAGE_ASSET_CACHE_CONTROL" \
   "$PACKAGE_REPO_STAGE_DIR" \
   "$destination"
+
+log_step "Uploading repository metadata to $destination"
+upload_deferred_repository_metadata
 
 log_step "Updating cache-control metadata"
 while IFS= read -r -d '' staged_file; do
   relative_path="${staged_file#"$PACKAGE_REPO_STAGE_DIR"/}"
   object_path="${destination%/}/${relative_path}"
-  cache_control="no-store"
-
-  case "$relative_path" in
-    *.deb|*.rpm|*.apk)
-      cache_control="public,max-age=31536000,immutable"
-      ;;
-  esac
+  cache_control="$(cache_control_for_path "$relative_path")"
 
   gcloud storage objects update "$object_path" --cache-control="$cache_control" >/dev/null
 done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f -print0)
+
+invalidate_cdn_cache
 
 printf 'Published package repository to %s\n' "$destination"

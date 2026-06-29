@@ -81,7 +81,8 @@ That target will:
 - pull the published Linux tooling image if needed
 - fetch the GPG key material from Secret Manager inside the container
 - rebuild the Debian and RPM repository metadata inside the container
-- sync the result to the package bucket prefix for that package
+- sync package assets to the package bucket prefix for that package
+- upload repository metadata with `Cache-Control: no-store` and invalidate the Cloud CDN cache for that package prefix
 
 On macOS, this avoids needing native installs of `aptly` or `createrepo_c`.
 
@@ -96,7 +97,8 @@ make sync-aptly-gpg-key-id
 
 - The managed SSL certificate will stay in provisioning until the delegated package subdomain resolves to the created load balancer IP.
 - The bucket is public so `apt` and other package managers can fetch package metadata and artifacts without authentication.
-- This stack grants the GitHub service account bucket-level `roles/storage.objectAdmin`, which is enough for syncing package repositories into the bucket.
+- This stack grants the GitHub service account bucket-level `roles/storage.objectAdmin` for syncing package repositories and a custom role with `compute.urlMaps.invalidateCache` for Cloud CDN invalidation.
+- Cloud CDN uses origin cache headers. Package assets are uploaded as long-lived immutable objects, while mutable repository metadata is uploaded as `no-store`.
 - Terraform creates the Secret Manager secret containers, but it does not write the private key or passphrase into Terraform state.
 
 ## libops setup
@@ -128,17 +130,17 @@ make package \
 ## Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.2.4 |
-| <a name="requirement_github"></a> [github](#requirement\_github) | 6.11.1 |
-| <a name="requirement_google"></a> [google](#requirement\_google) | 7.24.0 |
+| <a name="requirement_github"></a> [github](#requirement\_github) | 6.12.1 |
+| <a name="requirement_google"></a> [google](#requirement\_google) | 7.35.0 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_github.libops"></a> [github.libops](#provider\_github.libops) | 6.11.1 |
-| <a name="provider_google"></a> [google](#provider\_google) | 7.24.0 |
+| ---- | ------- |
+| <a name="provider_github.libops"></a> [github.libops](#provider\_github.libops) | 6.12.1 |
+| <a name="provider_google"></a> [google](#provider\_google) | 7.35.0 |
 
 ## Modules
 
@@ -147,43 +149,45 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
-| [github_actions_variable.aptly_gpg_key_id](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/resources/actions_variable) | resource |
-| [github_actions_variable.aptly_gpg_passphrase_secret](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/resources/actions_variable) | resource |
-| [github_actions_variable.aptly_gpg_private_key_secret](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/resources/actions_variable) | resource |
-| [github_actions_variable.bucket](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/resources/actions_variable) | resource |
-| [github_actions_variable.gsa](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/resources/actions_variable) | resource |
-| [github_actions_variable.oidc](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/resources/actions_variable) | resource |
-| [github_actions_variable.package_url](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/resources/actions_variable) | resource |
-| [github_actions_variable.project](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/resources/actions_variable) | resource |
-| [github_actions_variable.region](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/resources/actions_variable) | resource |
-| [google_compute_backend_bucket.packages](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/compute_backend_bucket) | resource |
-| [google_compute_global_address.packages](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/compute_global_address) | resource |
-| [google_compute_global_forwarding_rule.packages_https](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/compute_global_forwarding_rule) | resource |
-| [google_compute_managed_ssl_certificate.packages](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/compute_managed_ssl_certificate) | resource |
-| [google_compute_target_https_proxy.packages](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/compute_target_https_proxy) | resource |
-| [google_compute_url_map.packages](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/compute_url_map) | resource |
-| [google_dns_managed_zone.packages](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/dns_managed_zone) | resource |
-| [google_dns_record_set.packages_a](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/dns_record_set) | resource |
-| [google_iam_workload_identity_pool.pool](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/iam_workload_identity_pool) | resource |
-| [google_iam_workload_identity_pool_provider.github](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/iam_workload_identity_pool_provider) | resource |
-| [google_project.project](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/project) | resource |
-| [google_project_service.service](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/project_service) | resource |
-| [google_secret_manager_secret.aptly_passphrase](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/secret_manager_secret) | resource |
-| [google_secret_manager_secret.aptly_private_key](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/secret_manager_secret) | resource |
-| [google_secret_manager_secret_iam_member.github_aptly_passphrase_accessor](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/secret_manager_secret_iam_member) | resource |
-| [google_secret_manager_secret_iam_member.github_aptly_private_key_accessor](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/secret_manager_secret_iam_member) | resource |
-| [google_service_account.github](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/service_account) | resource |
-| [google_service_account_iam_member.oidc_user](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/service_account_iam_member) | resource |
-| [google_storage_bucket.packages](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/storage_bucket) | resource |
-| [google_storage_bucket_iam_member.github_writer](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/storage_bucket_iam_member) | resource |
-| [google_storage_bucket_iam_member.public_read](https://registry.terraform.io/providers/hashicorp/google/7.24.0/docs/resources/storage_bucket_iam_member) | resource |
-| [github_repository.repo](https://registry.terraform.io/providers/integrations/github/6.11.1/docs/data-sources/repository) | data source |
+| ---- | ---- |
+| [github_actions_variable.aptly_gpg_key_id](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
+| [github_actions_variable.aptly_gpg_passphrase_secret](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
+| [github_actions_variable.aptly_gpg_private_key_secret](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
+| [github_actions_variable.bucket](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
+| [github_actions_variable.gsa](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
+| [github_actions_variable.oidc](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
+| [github_actions_variable.package_url](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
+| [github_actions_variable.project](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
+| [github_actions_variable.region](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
+| [google_compute_backend_bucket.packages](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/compute_backend_bucket) | resource |
+| [google_compute_global_address.packages](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/compute_global_address) | resource |
+| [google_compute_global_forwarding_rule.packages_https](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/compute_global_forwarding_rule) | resource |
+| [google_compute_managed_ssl_certificate.packages](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/compute_managed_ssl_certificate) | resource |
+| [google_compute_target_https_proxy.packages](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/compute_target_https_proxy) | resource |
+| [google_compute_url_map.packages](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/compute_url_map) | resource |
+| [google_dns_managed_zone.packages](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/dns_managed_zone) | resource |
+| [google_dns_record_set.packages_a](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/dns_record_set) | resource |
+| [google_iam_workload_identity_pool.pool](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/iam_workload_identity_pool) | resource |
+| [google_iam_workload_identity_pool_provider.github](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/iam_workload_identity_pool_provider) | resource |
+| [google_project.project](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/project) | resource |
+| [google_project_iam_custom_role.cdn_cache_invalidator](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/project_iam_custom_role) | resource |
+| [google_project_iam_member.github_cdn_cache_invalidator](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/project_iam_member) | resource |
+| [google_project_service.service](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/project_service) | resource |
+| [google_secret_manager_secret.aptly_passphrase](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/secret_manager_secret) | resource |
+| [google_secret_manager_secret.aptly_private_key](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/secret_manager_secret) | resource |
+| [google_secret_manager_secret_iam_member.github_aptly_passphrase_accessor](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/secret_manager_secret_iam_member) | resource |
+| [google_secret_manager_secret_iam_member.github_aptly_private_key_accessor](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/secret_manager_secret_iam_member) | resource |
+| [google_service_account.github](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/service_account) | resource |
+| [google_service_account_iam_member.oidc_user](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/service_account_iam_member) | resource |
+| [google_storage_bucket.packages](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/storage_bucket) | resource |
+| [google_storage_bucket_iam_member.github_writer](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/storage_bucket_iam_member) | resource |
+| [google_storage_bucket_iam_member.public_read](https://registry.terraform.io/providers/hashicorp/google/7.35.0/docs/resources/storage_bucket_iam_member) | resource |
+| [github_repository.repo](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/data-sources/repository) | data source |
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_aptly_gpg_key_id"></a> [aptly\_gpg\_key\_id](#input\_aptly\_gpg\_key\_id) | GPG key ID Aptly uses to sign the published repository. | `string` | `""` | no |
 | <a name="input_aptly_gpg_passphrase_secret_id"></a> [aptly\_gpg\_passphrase\_secret\_id](#input\_aptly\_gpg\_passphrase\_secret\_id) | Secret Manager secret ID that stores the Aptly GPG key passphrase. | `string` | `"aptly-gpg-passphrase"` | no |
 | <a name="input_aptly_gpg_private_key_secret_id"></a> [aptly\_gpg\_private\_key\_secret\_id](#input\_aptly\_gpg\_private\_key\_secret\_id) | Secret Manager secret ID that stores the armored Aptly private key. | `string` | `"aptly-gpg-private-key"` | no |
@@ -204,7 +208,7 @@ No modules.
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_aptly_gpg_passphrase_secret_id"></a> [aptly\_gpg\_passphrase\_secret\_id](#output\_aptly\_gpg\_passphrase\_secret\_id) | Secret Manager secret ID for the Aptly key passphrase. |
 | <a name="output_aptly_gpg_private_key_secret_id"></a> [aptly\_gpg\_private\_key\_secret\_id](#output\_aptly\_gpg\_private\_key\_secret\_id) | Secret Manager secret ID for the armored Aptly private key. |
 | <a name="output_bucket_name"></a> [bucket\_name](#output\_bucket\_name) | Package bucket name. |

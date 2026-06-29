@@ -21,6 +21,8 @@ APTLY_ARCHITECTURES ?= amd64,arm64
 APTLY_PUBLISH_PREFIX ?= .
 APTLY_ORIGIN ?= libops
 RPM_REPOSITORY_PATH ?= rpm
+CDN_URL_MAP ?= packages-url-map
+CDN_INVALIDATE_CACHE ?= true
 PACKAGE_REPO_STAGE_DIR ?= $(ROOT_DIR)/.out/$(PACKAGE_NAME)/$(RELEASE_VERSION)
 PACKAGE_TOOLS_IMAGE ?= ghcr.io/libops/terraform-linux-packages:main
 HOST_GCLOUD_CONFIG ?= $(if $(CLOUDSDK_CONFIG),$(CLOUDSDK_CONFIG),$(HOME)/.config/gcloud)
@@ -142,6 +144,8 @@ publish-package-repo:
 		-e APTLY_LABEL="$(if $(APTLY_LABEL),$(APTLY_LABEL),$$PACKAGE_NAME_VALUE)" \
 		-e APTLY_PUBLIC_KEY_NAME="$(if $(APTLY_PUBLIC_KEY_NAME),$(APTLY_PUBLIC_KEY_NAME),$$PACKAGE_NAME_VALUE-archive-keyring)" \
 		-e RPM_REPOSITORY_PATH="$(RPM_REPOSITORY_PATH)" \
+		-e CDN_URL_MAP="$(CDN_URL_MAP)" \
+		-e CDN_INVALIDATE_CACHE="$(CDN_INVALIDATE_CACHE)" \
 		-e PACKAGE_REPO_STAGE_DIR="$(PACKAGE_REPO_STAGE_DIR)" \
 		"$(PACKAGE_TOOLS_IMAGE)" \
 		/bin/bash /workspace/terraform-linux-packages/scripts/publish-package-repo.sh
