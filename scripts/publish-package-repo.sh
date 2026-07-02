@@ -35,11 +35,13 @@ MERGED_DIST_DIR="$(mktemp -d)"
 PACKAGE_REPO_ASSET_DIR="$(mktemp -d)"
 LOCK_TIMEOUT_SECONDS="${LOCK_TIMEOUT_SECONDS:-600}"
 LOCK_POLL_SECONDS="${LOCK_POLL_SECONDS:-5}"
+LOCK_HEARTBEAT_SECONDS="${LOCK_HEARTBEAT_SECONDS:-60}"
 LOCK_OWNER="${LOCK_OWNER:-$(hostname)-$$-$(date -u +%s)}"
 current_step="initializing"
 private_key_file=""
 passphrase_file_secret=""
 lock_error_file=""
+lock_heartbeat_pid=""
 
 log_step() {
   current_step="$1"
@@ -54,6 +56,7 @@ on_error() {
 }
 
 cleanup() {
+  stop_lock_heartbeat
   release_lock
   if [ -n "${private_key_file:-}" ]; then
     rm -f "$private_key_file"
@@ -110,6 +113,69 @@ release_lock() {
   fi
 }
 
+refresh_lock() {
+  local generation details new_generation
+
+  if [ ! -f "$lock_generation_file" ]; then
+    return 0
+  fi
+
+  generation="$(cat "$lock_generation_file" 2>/dev/null || true)"
+  if [ -z "$generation" ]; then
+    return 0
+  fi
+
+  : >"$lock_error_file"
+  if printf '%s\n' "$LOCK_OWNER" | gcloud storage cp - "$lock_path" --if-generation-match="$generation" >/dev/null 2>"$lock_error_file"; then
+    details="$(describe_lock)"
+    new_generation="$(printf '%s\n' "$details" | awk '{print $1}')"
+    if [ -z "$new_generation" ]; then
+      printf 'Refreshed publish lock at %s, but could not resolve its generation\n' "$lock_path" >&2
+      return 1
+    fi
+    printf '%s' "$new_generation" >"$lock_generation_file"
+    printf 'Refreshed publish lock generation %s\n' "$new_generation"
+    return 0
+  fi
+
+  printf 'Unable to refresh publish lock at %s\n' "$lock_path" >&2
+  if [ -s "$lock_error_file" ]; then
+    cat "$lock_error_file" >&2
+  fi
+  return 1
+}
+
+lock_heartbeat_loop() {
+  local parent_pid="$1"
+
+  while true; do
+    sleep "$LOCK_HEARTBEAT_SECONDS"
+    if ! refresh_lock; then
+      printf 'Publish lock heartbeat failed; stopping publisher to avoid concurrent repository writes\n' >&2
+      kill -TERM "$parent_pid" >/dev/null 2>&1 || true
+      exit 1
+    fi
+  done
+}
+
+start_lock_heartbeat() {
+  if [ "${LOCK_HEARTBEAT_SECONDS:-0}" -le 0 ]; then
+    return 0
+  fi
+
+  lock_heartbeat_loop "$$" &
+  lock_heartbeat_pid="$!"
+  printf 'Started publish lock heartbeat every %ss\n' "$LOCK_HEARTBEAT_SECONDS"
+}
+
+stop_lock_heartbeat() {
+  if [ -n "${lock_heartbeat_pid:-}" ]; then
+    kill "$lock_heartbeat_pid" >/dev/null 2>&1 || true
+    wait "$lock_heartbeat_pid" 2>/dev/null || true
+    lock_heartbeat_pid=""
+  fi
+}
+
 acquire_lock() {
   local details generation update_time age now
   log_step "Acquiring publish lock at $lock_path"
@@ -124,6 +190,7 @@ acquire_lock() {
       fi
       printf '%s' "$generation" >"$lock_generation_file"
       printf 'Acquired publish lock generation %s\n' "$generation"
+      start_lock_heartbeat
       return 0
     fi
 
