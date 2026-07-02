@@ -148,6 +148,8 @@ refresh_lock() {
 lock_heartbeat_loop() {
   local parent_pid="$1"
 
+  trap - EXIT ERR
+
   while true; do
     sleep "$LOCK_HEARTBEAT_SECONDS"
     if ! refresh_lock; then
