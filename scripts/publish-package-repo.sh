@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -Eeuxo pipefail
+set -Eeuo pipefail
 shopt -s nullglob
 
 : "${DIST_DIR:?DIST_DIR is required}"
@@ -34,6 +34,7 @@ GNUPGHOME="${GNUPGHOME:-$(mktemp -d)}"
 MERGED_DIST_DIR="$(mktemp -d)"
 PACKAGE_REPO_ASSET_DIR="$(mktemp -d)"
 LOCK_TIMEOUT_SECONDS="${LOCK_TIMEOUT_SECONDS:-600}"
+LOCK_STALE_SECONDS="${LOCK_STALE_SECONDS:-600}"
 LOCK_POLL_SECONDS="${LOCK_POLL_SECONDS:-5}"
 LOCK_HEARTBEAT_SECONDS="${LOCK_HEARTBEAT_SECONDS:-60}"
 LOCK_OWNER="${LOCK_OWNER:-$(hostname)-$$-$(date -u +%s)}"
@@ -179,8 +180,9 @@ stop_lock_heartbeat() {
 }
 
 acquire_lock() {
-  local details generation update_time age now
+  local details generation update_time age now started_at elapsed
   log_step "Acquiring publish lock at $lock_path"
+  started_at="$(date -u +%s)"
   while true; do
     : >"$lock_error_file"
     if printf '%s\n' "$LOCK_OWNER" | gcloud storage cp - "$lock_path" --if-generation-match=0 >/dev/null 2>"$lock_error_file"; then
@@ -199,9 +201,14 @@ acquire_lock() {
     details="$(describe_lock)"
     generation="$(printf '%s\n' "$details" | awk '{print $1}')"
     update_time="$(printf '%s\n' "$details" | awk '{print $2}')"
+    now="$(date -u +%s)"
+    elapsed=$((now - started_at))
+    if [ "$elapsed" -ge "$LOCK_TIMEOUT_SECONDS" ]; then
+      printf 'Timed out after %ss waiting for publish lock at %s\n' "$elapsed" "$lock_path" >&2
+      return 1
+    fi
 
     if [ -n "$generation" ] && [ -n "$update_time" ]; then
-      now="$(date -u +%s)"
       age="$(python3 - "$update_time" "$now" <<'PY'
 from datetime import datetime
 import sys
@@ -210,13 +217,18 @@ now = int(sys.argv[2])
 print(max(0, now - int(updated.timestamp())))
 PY
 )"
-      if [ "$age" -ge "$LOCK_TIMEOUT_SECONDS" ]; then
+      if [ "$age" -ge "$LOCK_STALE_SECONDS" ]; then
         printf 'Removing stale publish lock generation %s at %s\n' "$generation" "$lock_path"
         gcloud storage rm "$lock_path" --if-generation-match="$generation" >/dev/null 2>&1 || true
         sleep 1
         continue
       fi
-      printf 'Publish lock is held by another process; waiting %ss (age %ss, timeout %ss)\n' "$LOCK_POLL_SECONDS" "$age" "$LOCK_TIMEOUT_SECONDS"
+      printf 'Publish lock is held by another process; waiting %ss (age %ss, wait timeout %ss)\n' "$LOCK_POLL_SECONDS" "$age" "$LOCK_TIMEOUT_SECONDS"
+    elif grep -Eq 'HTTPError 412|pre-conditions? .* did not hold' "$lock_error_file"; then
+      # A competing publisher can release its lock between our failed
+      # create-if-absent request and the describe. That is contention, not a
+      # storage failure; retry acquisition instead of failing the release.
+      printf 'Publish lock changed during acquisition; retrying in %ss\n' "$LOCK_POLL_SECONDS"
     else
       printf 'Unable to create or inspect publish lock at %s\n' "$lock_path" >&2
       if [ -s "$lock_error_file" ]; then

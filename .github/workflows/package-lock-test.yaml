@@ -1,0 +1,35 @@
+name: package-lock-test
+
+on:
+  pull_request:
+    paths:
+      - "scripts/publish-package-repo.sh"
+      - "scripts/test-publish-lock.sh"
+      - ".github/workflows/package-lock-test.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/publish-package-repo.sh"
+      - "scripts/test-publish-lock.sh"
+      - ".github/workflows/package-lock-test.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-lock-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Check shell syntax
+        run: bash -n scripts/publish-package-repo.sh scripts/test-publish-lock.sh
+
+      - name: Test lock handoff race
+        run: bash scripts/test-publish-lock.sh
