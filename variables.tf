@@ -9,9 +9,15 @@ variable "github_repositories" {
   type        = set(string)
   default = [
     "libops/sitectl",
+    "libops/sitectl-app-tmpl",
+    "libops/sitectl-archivesspace",
     "libops/sitectl-drupal",
     "libops/sitectl-isle",
     "libops/sitectl-libops",
+    "libops/sitectl-ojs",
+    "libops/sitectl-omeka-classic",
+    "libops/sitectl-omeka-s",
+    "libops/sitectl-wp",
   ]
 }
 
