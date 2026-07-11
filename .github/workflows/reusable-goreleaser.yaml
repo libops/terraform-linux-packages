@@ -82,7 +82,8 @@ jobs:
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7
         with:
           distribution: goreleaser
-          version: latest
+          # This binary receives the Homebrew publication token.
+          version: v2.17.0
           args: ${{ inputs.goreleaser-args }}
         env:
           GITHUB_TOKEN: ${{ secrets.HOMEBREW_REPO }}
@@ -100,7 +101,9 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: libops/terraform-linux-packages
-          ref: main
+          # Run a reviewed immutable package publisher, not whatever main
+          # contains at execution time.
+          ref: 6f39b1c35f31c258f34af155dd1b9c2046238558 # main
           path: .libops-packages
 
       - name: Publish Linux package repository
@@ -114,8 +117,9 @@ jobs:
           APTLY_GPG_KEY_ID: ${{ inputs.aptly-gpg-key-id }}
           APTLY_GPG_PRIVATE_KEY_SECRET: ${{ inputs.aptly-gpg-private-key-secret }}
           APTLY_GPG_PASSPHRASE_SECRET: ${{ inputs.aptly-gpg-passphrase-secret }}
+          LOCK_TIMEOUT_SECONDS: "7200"
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           make package \
             GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
             PACKAGE_NAME="${{ inputs.package-name }}" \
