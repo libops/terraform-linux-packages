@@ -241,16 +241,22 @@ PY
   done
 }
 
-is_deferred_repository_metadata_path() {
+is_package_asset_path() {
   local relative_path="$1"
 
   case "$relative_path" in
-    dists/*|Packages|Packages.*|Release|Release.gpg|InRelease|*/repodata/*)
+    *.deb|*.rpm|*.apk|by-hash/*|*/by-hash/*)
       return 0
       ;;
   esac
 
   return 1
+}
+
+is_deferred_repository_metadata_path() {
+  local relative_path="$1"
+
+  [ "$relative_path" != ".publish.lock" ] && ! is_package_asset_path "$relative_path"
 }
 
 metadata_upload_order() {
@@ -293,14 +299,11 @@ metadata_upload_order() {
 cache_control_for_path() {
   local relative_path="$1"
 
-  case "$relative_path" in
-    *.deb|*.rpm|*.apk|by-hash/*|*/by-hash/*)
-      printf '%s\n' "$PACKAGE_ASSET_CACHE_CONTROL"
-      ;;
-    *)
-      printf '%s\n' "$PACKAGE_METADATA_CACHE_CONTROL"
-      ;;
-  esac
+  if is_package_asset_path "$relative_path"; then
+    printf '%s\n' "$PACKAGE_ASSET_CACHE_CONTROL"
+  else
+    printf '%s\n' "$PACKAGE_METADATA_CACHE_CONTROL"
+  fi
 }
 
 upload_staged_file() {
@@ -720,15 +723,6 @@ gcloud storage rsync \
 
 log_step "Uploading repository metadata to $destination"
 upload_deferred_repository_metadata
-
-log_step "Updating cache-control metadata"
-while IFS= read -r -d '' staged_file; do
-  relative_path="${staged_file#"$PACKAGE_REPO_STAGE_DIR"/}"
-  object_path="${destination%/}/${relative_path}"
-  cache_control="$(cache_control_for_path "$relative_path")"
-
-  gcloud storage objects update "$object_path" --cache-control="$cache_control" >/dev/null
-done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f -print0)
 
 invalidate_cdn_cache
 

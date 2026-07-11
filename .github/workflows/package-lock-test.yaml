@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "scripts/publish-package-repo.sh"
+      - "scripts/test-publish-cache-control.sh"
       - "scripts/test-publish-lock.sh"
       - ".github/workflows/package-lock-test.yaml"
   push:
@@ -11,6 +12,7 @@ on:
       - main
     paths:
       - "scripts/publish-package-repo.sh"
+      - "scripts/test-publish-cache-control.sh"
       - "scripts/test-publish-lock.sh"
       - ".github/workflows/package-lock-test.yaml"
 
@@ -29,7 +31,14 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Check shell syntax
-        run: bash -n scripts/publish-package-repo.sh scripts/test-publish-lock.sh
+        run: >-
+          bash -n
+          scripts/publish-package-repo.sh
+          scripts/test-publish-cache-control.sh
+          scripts/test-publish-lock.sh
+
+      - name: Test cache-control upload contract
+        run: bash scripts/test-publish-cache-control.sh
 
       - name: Test lock handoff race
         run: bash scripts/test-publish-lock.sh
