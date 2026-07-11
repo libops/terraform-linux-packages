@@ -103,7 +103,7 @@ jobs:
           repository: libops/terraform-linux-packages
           # Run a reviewed immutable package publisher, not whatever main
           # contains at execution time.
-          ref: 6f39b1c35f31c258f34af155dd1b9c2046238558 # main
+          ref: 10b809370b9388e022c4fd41a4dfb0616080f30a # main
           path: .libops-packages
 
       - name: Publish Linux package repository
