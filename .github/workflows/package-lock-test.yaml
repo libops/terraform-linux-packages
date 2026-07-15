@@ -3,16 +3,20 @@ name: package-lock-test
 on:
   pull_request:
     paths:
+      - "Makefile"
       - "scripts/publish-package-repo.sh"
       - "scripts/test-publish-cache-control.sh"
+      - "scripts/test-make-lock-env.sh"
       - "scripts/test-publish-lock.sh"
       - ".github/workflows/package-lock-test.yaml"
   push:
     branches:
       - main
     paths:
+      - "Makefile"
       - "scripts/publish-package-repo.sh"
       - "scripts/test-publish-cache-control.sh"
+      - "scripts/test-make-lock-env.sh"
       - "scripts/test-publish-lock.sh"
       - ".github/workflows/package-lock-test.yaml"
 
@@ -35,6 +39,7 @@ jobs:
           bash -n
           scripts/publish-package-repo.sh
           scripts/test-publish-cache-control.sh
+          scripts/test-make-lock-env.sh
           scripts/test-publish-lock.sh
 
       - name: Test cache-control upload contract
@@ -42,3 +47,6 @@ jobs:
 
       - name: Test lock handoff race
         run: bash scripts/test-publish-lock.sh
+
+      - name: Test lock configuration forwarding
+        run: bash scripts/test-make-lock-env.sh
