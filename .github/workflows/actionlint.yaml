@@ -5,12 +5,14 @@ on:
     paths:
       - ".github/actions/**"
       - ".github/workflows/**"
+      - "scripts/test-image-workflow.sh"
   push:
     branches:
       - main
     paths:
       - ".github/actions/**"
       - ".github/workflows/**"
+      - "scripts/test-image-workflow.sh"
 
 permissions:
   contents: read
@@ -33,3 +35,6 @@ jobs:
 
       - name: Validate workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Validate image publication contract
+        run: bash scripts/test-image-workflow.sh
