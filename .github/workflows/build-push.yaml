@@ -2,17 +2,73 @@ name: build-push
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .github/workflows/build-push.yaml
+      - scripts/test-image-workflow.sh
   push:
     branches:
       - main
     paths:
       - Dockerfile
       - .github/workflows/build-push.yaml
+      - scripts/test-image-workflow.sh
+
+permissions:
+  contents: read
 
 jobs:
+  image-check:
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            suffix: arm64
+    runs-on: ${{ matrix.architecture.runner }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+
+      - name: Build native image without credentials
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: .
+          load: true
+          platforms: ${{ matrix.architecture.platform }}
+          provenance: false
+          push: false
+          tags: terraform-linux-packages:ci-${{ matrix.architecture.suffix }}
+
+      - name: Scan native image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: terraform-linux-packages:ci-${{ matrix.architecture.suffix }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+
   run:
-    uses: libops/.github/.github/workflows/build-push.yaml@d7f0ba06b4c8a1f8559892ea65a0b1af4d024dd3 # main
+    if: github.ref == 'refs/heads/main'
+    uses: libops/.github/.github/workflows/build-push.yaml@a86300fb8020d0f7141bb9f833d89b5dbd7aa4d7 # guarded-signed-image-publisher
+    with:
+      ref: ${{ github.sha }}
+      expected-main-sha: ${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+      scan: true
+      sign: true
+      certificate-identity: https://github.com/libops/.github/.github/workflows/build-push.yaml@a86300fb8020d0f7141bb9f833d89b5dbd7aa4d7
     permissions:
       contents: read
       packages: write
-    secrets: inherit
+      id-token: write
