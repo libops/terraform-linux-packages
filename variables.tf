@@ -12,7 +12,6 @@ variable "github_repositories" {
     "libops/sitectl-app-tmpl",
     "libops/sitectl-archivesspace",
     "libops/sitectl-drupal",
-    "libops/sitectl-isle",
     "libops/sitectl-libops",
     "libops/sitectl-ojs",
     "libops/sitectl-omeka-classic",
@@ -25,6 +24,19 @@ variable "github_actors" {
   description = "Optional GitHub actors allowed to use the provider. Leave empty to allow any actor from the approved repositories."
   type        = set(string)
   default     = []
+}
+
+variable "approved_job_workflow_refs" {
+  description = "Exact reusable-workflow identities allowed to publish packages. Keep active direct and shared workflow SHAs during migrations; branch and tag refs are rejected."
+  type        = set(string)
+
+  validation {
+    condition = length(var.approved_job_workflow_refs) > 0 && alltrue([
+      for workflow_ref in var.approved_job_workflow_refs :
+      can(regex("^libops/(terraform-linux-packages|[.]github)/[.]github/workflows/(reusable-goreleaser|sitectl-plugin-goreleaser)[.]ya?ml@[0-9a-f]{40}$", workflow_ref))
+    ])
+    error_message = "approved_job_workflow_refs must contain one or more exact 40-character SHA identities for the LibOps direct or shared package publisher workflow."
+  }
 }
 
 variable "project_name" {

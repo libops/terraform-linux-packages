@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -xeo pipefail -c
 
-.PHONY: package download-release-assets publish-package-repo package-tools-image package-tools-image-local create-aptly-gpg-key print-aptly-gpg-key-id sync-aptly-gpg-key-id
+.PHONY: package validate-package-exclusions download-release-assets publish-package-repo package-tools-image package-tools-image-local create-aptly-gpg-key print-aptly-gpg-key-id sync-aptly-gpg-key-id docs
 
 ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 TFVARS_PATH ?= $(ROOT_DIR)/terraform.tfvars
@@ -27,6 +27,8 @@ LOCK_TIMEOUT_SECONDS ?= 600
 LOCK_STALE_SECONDS ?= 600
 LOCK_POLL_SECONDS ?= 5
 LOCK_HEARTBEAT_SECONDS ?= 60
+EXCLUDED_PACKAGE_NAMES ?=
+export EXCLUDED_PACKAGE_NAMES
 PACKAGE_REPO_STAGE_DIR ?= $(ROOT_DIR)/.out/$(PACKAGE_NAME)/$(RELEASE_VERSION)
 PACKAGE_TOOLS_IMAGE ?= ghcr.io/libops/terraform-linux-packages:main
 HOST_GCLOUD_CONFIG ?= $(if $(CLOUDSDK_CONFIG),$(CLOUDSDK_CONFIG),$(HOME)/.config/gcloud)
@@ -36,7 +38,7 @@ APTLY_GPG_EMAIL ?= packages@libops.io
 APTLY_GPG_KEY_EXPIRE ?= 2y
 APTLY_GPG_ARTIFACTS_DIR ?= $(ROOT_DIR)/.out/gpg
 
-package: download-release-assets publish-package-repo
+package: validate-package-exclusions download-release-assets publish-package-repo
 
 package-tools-image:
 	docker pull "$(PACKAGE_TOOLS_IMAGE)"
@@ -100,6 +102,14 @@ sync-aptly-gpg-key-id:
 	mv "$$TMP_FILE" "$(TFVARS_PATH)"; \
 	echo "Set aptly_gpg_key_id to $$KEY_ID in $(TFVARS_PATH)"
 
+validate-package-exclusions:
+	@PACKAGE_NAME_VALUE="$${PACKAGE_NAME:-}"; \
+	if [ -z "$$PACKAGE_NAME_VALUE" ]; then \
+		PACKAGE_NAME_VALUE="$${GITHUB_REPOSITORY##*/}"; \
+	fi; \
+	PACKAGE_NAME="$$PACKAGE_NAME_VALUE" \
+	/bin/bash "$(ROOT_DIR)/scripts/validate-package-exclusions.sh"
+
 download-release-assets:
 	@test -n "$(GITHUB_REPOSITORY)" || (echo "GITHUB_REPOSITORY is required" && exit 1)
 	@test -n "$(RELEASE_VERSION)" || (echo "RELEASE_VERSION is required" && exit 1)
@@ -114,7 +124,7 @@ download-release-assets:
 	PACKAGE_NAME="$$PACKAGE_NAME_VALUE" \
 	/bin/bash "$(ROOT_DIR)/scripts/download-release-assets.sh"
 
-publish-package-repo:
+publish-package-repo: validate-package-exclusions
 	@test -n "$(GCLOUD_PROJECT)" || (echo "GCLOUD_PROJECT is required" && exit 1)
 	@test -n "$(GCS_BUCKET)" || (echo "GCS_BUCKET is required" && exit 1)
 	@test -n "$(APTLY_GPG_KEY_ID)" || (echo "APTLY_GPG_KEY_ID is required" && exit 1)
@@ -154,8 +164,9 @@ publish-package-repo:
 		-e LOCK_STALE_SECONDS="$(LOCK_STALE_SECONDS)" \
 		-e LOCK_POLL_SECONDS="$(LOCK_POLL_SECONDS)" \
 		-e LOCK_HEARTBEAT_SECONDS="$(LOCK_HEARTBEAT_SECONDS)" \
+		-e "EXCLUDED_PACKAGE_NAMES=$${EXCLUDED_PACKAGE_NAMES}" \
 		-e PACKAGE_REPO_STAGE_DIR="$(PACKAGE_REPO_STAGE_DIR)" \
 		"$(PACKAGE_TOOLS_IMAGE)" \
 		/bin/bash /workspace/terraform-linux-packages/scripts/publish-package-repo.sh
 docs:
-	terraform-docs markdown table --output-file README.md .
+	terraform-docs markdown table --lockfile=false --output-file README.md .

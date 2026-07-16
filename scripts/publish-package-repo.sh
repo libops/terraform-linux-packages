@@ -8,12 +8,11 @@ shopt -s nullglob
 : "${GCS_BUCKET:?GCS_BUCKET is required}"
 : "${APTLY_GPG_KEY_ID:?APTLY_GPG_KEY_ID is required}"
 
-PACKAGE_NAME="${PACKAGE_NAME:-${GITHUB_REPOSITORY:-}}"
-PACKAGE_NAME="${PACKAGE_NAME##*/}"
-if [ -z "$PACKAGE_NAME" ]; then
-  echo "PACKAGE_NAME could not be determined"
-  exit 1
-fi
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=package-exclusions.sh
+source "$script_dir/package-exclusions.sh"
+prepare_package_exclusions
+
 APTLY_DISTRIBUTIONS="${APTLY_DISTRIBUTIONS:-bookworm}"
 APTLY_COMPONENT="${APTLY_COMPONENT:-main}"
 APTLY_ARCHITECTURES="${APTLY_ARCHITECTURES:-amd64,arm64}"
@@ -43,6 +42,7 @@ private_key_file=""
 passphrase_file_secret=""
 lock_error_file=""
 lock_heartbeat_pid=""
+excluded_bucket_objects_file=""
 
 log_step() {
   current_step="$1"
@@ -67,6 +67,9 @@ cleanup() {
   fi
   if [ -n "${lock_error_file:-}" ]; then
     rm -f "$lock_error_file"
+  fi
+  if [ -n "${excluded_bucket_objects_file:-}" ]; then
+    rm -f "$excluded_bucket_objects_file"
   fi
   if [[ "${PACKAGE_REPO_STAGE_DIR}" == /tmp/* ]]; then
     rm -rf "$PACKAGE_REPO_STAGE_DIR"
@@ -98,6 +101,7 @@ fi
 lock_path="${destination%/}/.publish.lock"
 lock_generation_file="$(mktemp)"
 lock_error_file="$(mktemp)"
+excluded_bucket_objects_file="$(mktemp)"
 
 describe_lock() {
   gcloud storage objects describe "$lock_path" --format="value(generation,update_time)" 2>/dev/null || true
@@ -456,6 +460,23 @@ package_file_name() {
   esac
 }
 
+validate_current_release_artifacts() {
+  local package_file package_name
+
+  while IFS= read -r -d '' package_file; do
+    package_name="$(package_file_name "$package_file")"
+    if [ -z "$package_name" ] || ! package_name_is_valid "$package_name"; then
+      printf 'Unable to determine a canonical package name for %s\n' "$package_file" >&2
+      return 1
+    fi
+    if is_excluded_package_name "$package_name"; then
+      printf "Release artifact %s has excluded package name '%s'\n" \
+        "$package_file" "$package_name" >&2
+      return 1
+    fi
+  done < <(find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
+}
+
 stage_package_artifacts() {
   find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -exec cp {} "$PACKAGE_REPO_STAGE_DIR"/ \;
 }
@@ -519,6 +540,40 @@ prune_stage_package_history() {
   done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
 }
 
+prune_excluded_package_artifacts() {
+  local staged_package package_name relative_path
+
+  : >"$excluded_bucket_objects_file"
+  while IFS= read -r -d '' staged_package; do
+    package_name="$(package_file_name "$staged_package")"
+    if [ -z "$package_name" ] || ! package_name_is_valid "$package_name"; then
+      printf 'Unable to determine a canonical package name for %s\n' "$staged_package" >&2
+      return 1
+    fi
+    if ! is_excluded_package_name "$package_name"; then
+      continue
+    fi
+
+    relative_path="${staged_package#"$PACKAGE_REPO_STAGE_DIR"/}"
+    printf 'Pruning excluded package artifact %s (%s)\n' "$relative_path" "$package_name"
+    printf '%s\0' "$relative_path" >>"$excluded_bucket_objects_file"
+    rm -f "$staged_package"
+  done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
+}
+
+delete_excluded_bucket_objects() {
+  local relative_path
+
+  if [ ! -s "$excluded_bucket_objects_file" ]; then
+    return 0
+  fi
+
+  log_step "Deleting excluded package objects after replacement metadata is live"
+  while IFS= read -r -d '' relative_path; do
+    gcloud storage rm "${destination%/}/$relative_path"
+  done <"$excluded_bucket_objects_file"
+}
+
 prune_stage_release_history() {
   local entry release_name
 
@@ -531,19 +586,24 @@ prune_stage_release_history() {
   done
 }
 
+validate_current_release_artifacts
 acquire_lock
 
 log_step "Syncing existing package repository from $destination"
-gcloud storage rsync \
+if ! gcloud storage rsync \
   --recursive \
+  --delete-unmatched-destination-objects \
   "$destination" \
-  "$PACKAGE_REPO_STAGE_DIR" || {
-    printf 'No existing repository state was synced from %s; continuing with current release artifacts.\n' "$destination" >&2
-  }
+  "$PACKAGE_REPO_STAGE_DIR"; then
+  printf 'Unable to sync the complete existing package repository from %s; refusing to replace metadata from partial state.\n' \
+    "$destination" >&2
+  exit 1
+fi
 rm -f "$PACKAGE_REPO_STAGE_DIR/.publish.lock"
 
 log_step "Pruning stale package artifacts"
 prune_stage_release_history
+prune_excluded_package_artifacts
 prune_stage_package_history
 stage_package_artifacts
 
@@ -724,6 +784,7 @@ gcloud storage rsync \
 log_step "Uploading repository metadata to $destination"
 upload_deferred_repository_metadata
 
+delete_excluded_bucket_objects
 invalidate_cdn_cache
 
 printf 'Published package repository to %s\n' "$destination"

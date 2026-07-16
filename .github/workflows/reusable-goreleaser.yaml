@@ -31,6 +31,11 @@ on:
         required: false
         type: string
         default: ""
+      excluded-package-names:
+        description: Additional comma- or whitespace-separated package names removed alongside publisher-mandatory exclusions
+        required: false
+        type: string
+        default: ""
       gcp-project:
         required: false
         type: string
@@ -60,18 +65,19 @@ on:
         type: string
         default: "aptly-gpg-passphrase"
 
-permissions:
-  contents: write
-  id-token: write
+permissions: {}
 
 jobs:
   goreleaser:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
@@ -90,26 +96,70 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           HOMEBREW_REPO_TOKEN: ${{ secrets.HOMEBREW_REPO }}
 
+  publish-linux-packages:
+    needs: goreleaser
+    if: ${{ inputs.publish-package-repo }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout Package Publisher
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: ${{ job.workflow_repository }}
+          # Use the exact commit that defines this called job. Checkout happens
+          # after caller-controlled release hooks so the credentialed publisher
+          # cannot be dirtied or replaced before it runs.
+          ref: ${{ job.workflow_sha }}
+          path: .libops-packages
+          persist-credentials: false
+
+      - name: Validate Linux package exclusions
+        shell: bash
+        working-directory: .libops-packages
+        env:
+          PACKAGE_NAME: ${{ inputs.package-name }}
+          EXCLUDED_PACKAGE_NAMES: ${{ inputs.excluded-package-names }}
+        run: bash scripts/validate-package-exclusions.sh
+
+      - name: Build exact package tools image
+        id: package-tools
+        shell: bash
+        working-directory: .libops-packages
+        env:
+          PACKAGE_PUBLISHER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PACKAGE_PUBLISHER_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "publisher workflow SHA must be an exact lowercase commit ID" >&2
+            exit 1
+          fi
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "$actual_sha" != "$PACKAGE_PUBLISHER_SHA" ]]; then
+            echo "package publisher checkout does not match the workflow SHA" >&2
+            exit 1
+          fi
+          image="libops/terraform-linux-packages:publisher-${PACKAGE_PUBLISHER_SHA}"
+          docker build --tag "$image" .
+          image_id="$(docker image inspect --format '{{.Id}}' "$image")"
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "exact package-tools build did not produce a canonical image ID" >&2
+            exit 1
+          fi
+          {
+            echo "image=$image"
+            echo "image-id=$image_id"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Authenticate to Google Cloud
-        if: ${{ inputs.publish-package-repo }}
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ inputs.workload-identity-provider }}
           service_account: ${{ inputs.service-account }}
           create_credentials_file: true
 
-      - name: Checkout Package Publisher
-        if: ${{ inputs.publish-package-repo }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-        with:
-          repository: libops/terraform-linux-packages
-          # Run a reviewed immutable package publisher, not whatever main
-          # contains at execution time.
-          ref: 72d2f0c3b01e5e396d6db074108b95e95eedf4d4 # main
-          path: .libops-packages
-
       - name: Publish Linux package repository
-        if: ${{ inputs.publish-package-repo }}
         shell: bash
         working-directory: .libops-packages
         env:
@@ -119,13 +169,14 @@ jobs:
           APTLY_GPG_KEY_ID: ${{ inputs.aptly-gpg-key-id }}
           APTLY_GPG_PRIVATE_KEY_SECRET: ${{ inputs.aptly-gpg-private-key-secret }}
           APTLY_GPG_PASSPHRASE_SECRET: ${{ inputs.aptly-gpg-passphrase-secret }}
+          APTLY_LABEL: ${{ inputs.package-repo-label }}
+          APTLY_PUBLIC_KEY_NAME: ${{ inputs.package-public-key-name }}
+          EXCLUDED_PACKAGE_NAMES: ${{ inputs.excluded-package-names }}
+          GCS_BUCKET_PREFIX: ${{ inputs.package-repo-prefix }}
           LOCK_TIMEOUT_SECONDS: "7200"
-        run: |
-          set -euo pipefail
-          make package \
-            GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
-            PACKAGE_NAME="${{ inputs.package-name }}" \
-            GCS_BUCKET_PREFIX="${{ inputs.package-repo-prefix }}" \
-            APTLY_LABEL="${{ inputs.package-repo-label }}" \
-            APTLY_PUBLIC_KEY_NAME="${{ inputs.package-public-key-name }}" \
-            RELEASE_VERSION="${GITHUB_REF_NAME}"
+          PACKAGE_NAME: ${{ inputs.package-name }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+          PACKAGE_TOOLS_IMAGE: ${{ steps.package-tools.outputs.image }}
+          EXPECTED_PACKAGE_TOOLS_IMAGE_ID: ${{ steps.package-tools.outputs.image-id }}
+          PACKAGE_PUBLISHER_SHA: ${{ job.workflow_sha }}
+        run: bash scripts/publish-release-from-environment.sh

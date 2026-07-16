@@ -16,7 +16,26 @@ Only the repositories listed in `github_repositories` receive:
 - `LIBOPS_PACKAGES_APTLY_GPG_PRIVATE_KEY_SECRET`
 - `LIBOPS_PACKAGES_APTLY_GPG_PASSPHRASE_SECRET`
 
-If `github_actors` is non-empty, the Workload Identity provider also restricts access to those actors. That check happens in the provider `attribute_condition`, so both repository and actor must match.
+If `github_actors` is non-empty, the Workload Identity provider also restricts access to those actors. Every token must additionally contain a `job_workflow_ref` from `approved_job_workflow_refs`. The approved value includes the reusable workflow repository, file, and exact 40-character commit SHA; branch and tag identities are rejected. Repository, optional actor, and exact workflow identity must all match.
+
+`libops/sitectl-isle` is intentionally absent from the default publisher allowlist until its v1 release. When the applied `github_repositories` value also omits it, the plan removes that repository's package-publisher WIF binding and managed Actions variables; it does not alter the repository itself.
+
+### Rotating an approved publisher workflow
+
+`approved_job_workflow_refs` must cover both active publication paths:
+
+- `libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@<sha>` for the direct core release workflow
+- `libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@<sha>` for the shared plugin release workflow
+
+Workflow identity changes and WIF changes cannot be made atomically across repositories. Use this sequence so existing releases remain authorized without granting a mutable identity:
+
+1. Merge the replacement reusable workflow and record its exact merge commit SHA.
+2. Add its exact `job_workflow_ref` to `approved_job_workflow_refs` in the applied `terraform.tfvars`, alongside every currently active SHA.
+3. Run `terraform plan` and verify that the Workload Identity provider condition adds only the intended exact identity, then apply.
+4. Update direct or plugin caller workflows to pin the newly approved SHA and verify a package publication.
+5. Remove the superseded workflow identity from `approved_job_workflow_refs` and apply again only after every caller has migrated.
+
+For the shared plugin path, merge the shared workflow first, approve its resulting exact SHA here, and only then update plugin callers. This variable is required and intentionally has no Terraform default. The example values are migration anchors for the currently active direct and shared workflows; the applied `terraform.tfvars` must be updated after each workflow merge.
 
 ## Usage
 
@@ -54,7 +73,7 @@ make sync-aptly-gpg-key-id
 
 ## Publishing
 
-This repo includes a local publishing path that mirrors the shared GitHub Actions workflow.
+This repo includes a local publishing path that uses the same validation and repository-building logic as GitHub Actions.
 
 Prerequisites:
 
@@ -74,6 +93,20 @@ Example:
 ```bash
 make package GITHUB_REPOSITORY=libops/sitectl PACKAGE_NAME=sitectl RELEASE_VERSION=v1.2.3
 ```
+
+The rolling `sitectl` channel has a publisher-owned mandatory exclusion for `sitectl-isle` until its v1 release. Callers cannot disable that policy. Only the core `sitectl` channel owner may use `EXCLUDED_PACKAGE_NAMES` to request comma- or whitespace-separated canonical lowercase package names in addition to the mandatory policy; plugin publishers cannot remove other packages:
+
+```bash
+make package \
+  GITHUB_REPOSITORY=libops/sitectl \
+  PACKAGE_NAME=sitectl \
+  RELEASE_VERSION=v1.2.3 \
+  EXCLUDED_PACKAGE_NAMES="sitectl-preview"
+```
+
+Every publication validates the current package name and all current `.deb` and `.rpm` artifacts before using Google Cloud. An excluded current package or artifact fails closed. After the publisher acquires the channel lock, it synchronizes an exact local snapshot that deletes destination-only stage files, and the complete existing repository must sync successfully; a failed or partial sync stops publication before signing-key access or metadata upload. The exact snapshot prevents a local or retried run from resurrecting stale artifacts. The publisher removes excluded historical artifacts from the staged repository, rebuilds and uploads replacement APT/RPM metadata, and only then deletes the excluded GCS objects. Keeping the exclusion in every publication makes interrupted cleanup self-healing: later publications rediscover and retry any unreferenced object that was not deleted.
+
+When invoked by the core channel owner, the reusable GoReleaser workflow accepts additional exclusions through its `excluded-package-names` input; plugin package names are rejected if they request any addition. GoReleaser runs in a job without OIDC permission. A dependent publication job checks out the exact commit that defines the called workflow, validates the mandatory policy, and builds a local package-tools image from that checkout before cloud authentication. Credentialed publication uses a direct environment-reading wrapper, verifies the unchanged local image ID, and never invokes GNU Make or pulls the mutable `main` image.
 
 That target will:
 
@@ -120,17 +153,13 @@ make package \
   GITHUB_REPOSITORY=libops/sitectl-drupal \
   PACKAGE_NAME=sitectl-drupal \
   RELEASE_VERSION=v0.0.4
-make package \
-  GITHUB_REPOSITORY=libops/sitectl-isle \
-  PACKAGE_NAME=sitectl-isle \
-  RELEASE_VERSION=v0.6.1
 ```
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
 | Name | Version |
-| ---- | ------- |
+|------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.2.4 |
 | <a name="requirement_github"></a> [github](#requirement\_github) | 6.12.1 |
 | <a name="requirement_google"></a> [google](#requirement\_google) | 7.35.0 |
@@ -138,7 +167,7 @@ make package \
 ## Providers
 
 | Name | Version |
-| ---- | ------- |
+|------|---------|
 | <a name="provider_github.libops"></a> [github.libops](#provider\_github.libops) | 6.12.1 |
 | <a name="provider_google"></a> [google](#provider\_google) | 7.35.0 |
 
@@ -149,7 +178,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-| ---- | ---- |
+|------|------|
 | [github_actions_variable.aptly_gpg_key_id](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
 | [github_actions_variable.aptly_gpg_passphrase_secret](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
 | [github_actions_variable.aptly_gpg_private_key_secret](https://registry.terraform.io/providers/integrations/github/6.12.1/docs/resources/actions_variable) | resource |
@@ -187,7 +216,8 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-| ---- | ----------- | ---- | ------- | :------: |
+|------|-------------|------|---------|:--------:|
+| <a name="input_approved_job_workflow_refs"></a> [approved\_job\_workflow\_refs](#input\_approved\_job\_workflow\_refs) | Exact reusable-workflow identities allowed to publish packages. Keep active direct and shared workflow SHAs during migrations; branch and tag refs are rejected. | `set(string)` | n/a | yes |
 | <a name="input_aptly_gpg_key_id"></a> [aptly\_gpg\_key\_id](#input\_aptly\_gpg\_key\_id) | GPG key ID Aptly uses to sign the published repository. | `string` | `""` | no |
 | <a name="input_aptly_gpg_passphrase_secret_id"></a> [aptly\_gpg\_passphrase\_secret\_id](#input\_aptly\_gpg\_passphrase\_secret\_id) | Secret Manager secret ID that stores the Aptly GPG key passphrase. | `string` | `"aptly-gpg-passphrase"` | no |
 | <a name="input_aptly_gpg_private_key_secret_id"></a> [aptly\_gpg\_private\_key\_secret\_id](#input\_aptly\_gpg\_private\_key\_secret\_id) | Secret Manager secret ID that stores the armored Aptly private key. | `string` | `"aptly-gpg-private-key"` | no |
@@ -198,7 +228,7 @@ No modules.
 | <a name="input_dns_zone_name"></a> [dns\_zone\_name](#input\_dns\_zone\_name) | Cloud DNS managed zone name. | `string` | `"packages-libops-io"` | no |
 | <a name="input_github_actors"></a> [github\_actors](#input\_github\_actors) | Optional GitHub actors allowed to use the provider. Leave empty to allow any actor from the approved repositories. | `set(string)` | `[]` | no |
 | <a name="input_github_owner"></a> [github\_owner](#input\_github\_owner) | GitHub organization that owns the repositories allowed to publish packages. | `string` | `"libops"` | no |
-| <a name="input_github_repositories"></a> [github\_repositories](#input\_github\_repositories) | Full GitHub repository names allowed to impersonate the publishing service account. | `set(string)` | <pre>[<br/>  "libops/sitectl",<br/>  "libops/sitectl-app-tmpl",<br/>  "libops/sitectl-archivesspace",<br/>  "libops/sitectl-drupal",<br/>  "libops/sitectl-isle",<br/>  "libops/sitectl-libops",<br/>  "libops/sitectl-ojs",<br/>  "libops/sitectl-omeka-classic",<br/>  "libops/sitectl-omeka-s",<br/>  "libops/sitectl-wp"<br/>]</pre> | no |
+| <a name="input_github_repositories"></a> [github\_repositories](#input\_github\_repositories) | Full GitHub repository names allowed to impersonate the publishing service account. | `set(string)` | <pre>[<br/>  "libops/sitectl",<br/>  "libops/sitectl-app-tmpl",<br/>  "libops/sitectl-archivesspace",<br/>  "libops/sitectl-drupal",<br/>  "libops/sitectl-libops",<br/>  "libops/sitectl-ojs",<br/>  "libops/sitectl-omeka-classic",<br/>  "libops/sitectl-omeka-s",<br/>  "libops/sitectl-wp"<br/>]</pre> | no |
 | <a name="input_org_id"></a> [org\_id](#input\_org\_id) | Google Cloud organization ID. | `string` | n/a | yes |
 | <a name="input_package_domain"></a> [package\_domain](#input\_package\_domain) | Fully qualified domain name that will serve the package repository. | `string` | `"packages.libops.io"` | no |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | Google Cloud project ID. | `string` | `"libops-linux-packages"` | no |
@@ -208,7 +238,7 @@ No modules.
 ## Outputs
 
 | Name | Description |
-| ---- | ----------- |
+|------|-------------|
 | <a name="output_aptly_gpg_passphrase_secret_id"></a> [aptly\_gpg\_passphrase\_secret\_id](#output\_aptly\_gpg\_passphrase\_secret\_id) | Secret Manager secret ID for the Aptly key passphrase. |
 | <a name="output_aptly_gpg_private_key_secret_id"></a> [aptly\_gpg\_private\_key\_secret\_id](#output\_aptly\_gpg\_private\_key\_secret\_id) | Secret Manager secret ID for the armored Aptly private key. |
 | <a name="output_bucket_name"></a> [bucket\_name](#output\_bucket\_name) | Package bucket name. |

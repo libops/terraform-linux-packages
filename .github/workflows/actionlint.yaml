@@ -3,16 +3,20 @@ name: actionlint
 on:
   pull_request:
     paths:
+      - ".github/actionlint.yaml"
       - ".github/actions/**"
       - ".github/workflows/**"
       - "scripts/test-image-workflow.sh"
+      - "scripts/test-reusable-workflow.sh"
   push:
     branches:
       - main
     paths:
+      - ".github/actionlint.yaml"
       - ".github/actions/**"
       - ".github/workflows/**"
       - "scripts/test-image-workflow.sh"
+      - "scripts/test-reusable-workflow.sh"
 
 permissions:
   contents: read
@@ -38,3 +42,6 @@ jobs:
 
       - name: Validate image publication contract
         run: bash scripts/test-image-workflow.sh
+
+      - name: Validate reusable release workflow contract
+        run: bash scripts/test-reusable-workflow.sh

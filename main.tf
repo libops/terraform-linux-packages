@@ -24,6 +24,7 @@ locals {
   project_num             = google_project.project.number
   repos                   = toset(var.github_repositories)
   actors                  = toset(var.github_actors)
+  approved_workflow_refs  = toset(var.approved_job_workflow_refs)
   repos_with_aptly_key_id = var.aptly_gpg_key_id != "" ? local.repos : toset([])
   default_services = toset([
     "cloudresourcemanager.googleapis.com",
@@ -44,7 +45,11 @@ locals {
     "(%s)",
     join(" || ", [for actor in local.actors : "assertion.actor == '${actor}'"]),
   ) : "true"
-  provider_attribute_condition = "${local.repository_condition} && ${local.actor_condition}"
+  job_workflow_ref_condition = format(
+    "(%s)",
+    join(" || ", [for workflow_ref in local.approved_workflow_refs : "assertion.job_workflow_ref == '${workflow_ref}'"]),
+  )
+  provider_attribute_condition = "${local.repository_condition} && ${local.actor_condition} && ${local.job_workflow_ref_condition}"
 }
 
 # =============================================================================
@@ -160,9 +165,10 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   description                        = "GitHub identity pool provider for syncing package repositories"
   attribute_condition                = local.provider_attribute_condition
   attribute_mapping = {
-    "google.subject"       = "assertion.sub"
-    "attribute.actor"      = "assertion.actor"
-    "attribute.repository" = "assertion.repository"
+    "google.subject"             = "assertion.sub"
+    "attribute.actor"            = "assertion.actor"
+    "attribute.job_workflow_ref" = "assertion.job_workflow_ref"
+    "attribute.repository"       = "assertion.repository"
   }
 
   oidc {

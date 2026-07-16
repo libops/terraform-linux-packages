@@ -3,12 +3,19 @@ github_repositories = [
   "libops/sitectl-app-tmpl",
   "libops/sitectl-archivesspace",
   "libops/sitectl-drupal",
-  "libops/sitectl-isle",
   "libops/sitectl-libops",
   "libops/sitectl-ojs",
   "libops/sitectl-omeka-classic",
   "libops/sitectl-omeka-s",
   "libops/sitectl-wp",
+]
+
+# Keep every currently active exact workflow SHA while migrating callers.
+# Add a merged replacement workflow SHA and apply this stack before changing
+# callers to use it; remove the superseded SHA only after migration completes.
+approved_job_workflow_refs = [
+  "libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@481df51116aed2efd1c002ef1ef6a287699828a0",
+  "libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@e1e30b58c9c566f72b22f03e637cd5218d635727",
 ]
 
 github_actors = [
