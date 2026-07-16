@@ -4,20 +4,34 @@ on:
   pull_request:
     paths:
       - "Makefile"
+      - "scripts/download-release-assets.sh"
+      - "scripts/package-exclusions.sh"
       - "scripts/publish-package-repo.sh"
+      - "scripts/publish-release-from-environment.sh"
+      - "scripts/test-package-exclusion-validation.sh"
       - "scripts/test-publish-cache-control.sh"
+      - "scripts/test-publish-environment.sh"
+      - "scripts/test-publish-exclusions.sh"
       - "scripts/test-make-lock-env.sh"
       - "scripts/test-publish-lock.sh"
+      - "scripts/validate-package-exclusions.sh"
       - ".github/workflows/package-lock-test.yaml"
   push:
     branches:
       - main
     paths:
       - "Makefile"
+      - "scripts/download-release-assets.sh"
+      - "scripts/package-exclusions.sh"
       - "scripts/publish-package-repo.sh"
+      - "scripts/publish-release-from-environment.sh"
+      - "scripts/test-package-exclusion-validation.sh"
       - "scripts/test-publish-cache-control.sh"
+      - "scripts/test-publish-environment.sh"
+      - "scripts/test-publish-exclusions.sh"
       - "scripts/test-make-lock-env.sh"
       - "scripts/test-publish-lock.sh"
+      - "scripts/validate-package-exclusions.sh"
       - ".github/workflows/package-lock-test.yaml"
 
 permissions:
@@ -37,10 +51,28 @@ jobs:
       - name: Check shell syntax
         run: >-
           bash -n
+          scripts/download-release-assets.sh
+          scripts/package-exclusions.sh
           scripts/publish-package-repo.sh
+          scripts/publish-release-from-environment.sh
+          scripts/test-package-exclusion-validation.sh
           scripts/test-publish-cache-control.sh
+          scripts/test-publish-environment.sh
+          scripts/test-publish-exclusions.sh
           scripts/test-make-lock-env.sh
           scripts/test-publish-lock.sh
+          scripts/test-publisher-allowlist.sh
+          scripts/test-wif-workflow-allowlist.sh
+          scripts/validate-package-exclusions.sh
+
+      - name: Test package exclusion validation
+        run: bash scripts/test-package-exclusion-validation.sh
+
+      - name: Test persistent package exclusion
+        run: bash scripts/test-publish-exclusions.sh
+
+      - name: Test credentialed publication boundary
+        run: bash scripts/test-publish-environment.sh
 
       - name: Test cache-control upload contract
         run: bash scripts/test-publish-cache-control.sh

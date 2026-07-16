@@ -46,9 +46,24 @@ for expected in \
   LOCK_TIMEOUT_SECONDS=7200 \
   LOCK_STALE_SECONDS=900 \
   LOCK_POLL_SECONDS=7 \
-  LOCK_HEARTBEAT_SECONDS=30; do
+  LOCK_HEARTBEAT_SECONDS=30 \
+  EXCLUDED_PACKAGE_NAMES=; do
   if ! grep -Fxq "$expected" "$tmp/docker-args"; then
     printf 'Docker invocation did not forward %s\n' "$expected" >&2
     exit 1
   fi
 done
+
+injection_marker="$tmp/exclusion-input-was-executed"
+if PATH="$tmp/bin:$PATH" \
+  EXCLUDED_PACKAGE_NAMES="sitectl-isle\"; touch $injection_marker; #" \
+  make --no-print-directory -C "$repo_root" validate-package-exclusions \
+    PACKAGE_NAME=sitectl >"$tmp/invalid-exclusion.log" 2>&1; then
+  printf 'Invalid Make exclusion input unexpectedly passed validation\n' >&2
+  exit 1
+fi
+grep -Fq "Invalid excluded package name" "$tmp/invalid-exclusion.log"
+if [ -e "$injection_marker" ]; then
+  printf 'Make exclusion input executed as shell code\n' >&2
+  exit 1
+fi

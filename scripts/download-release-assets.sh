@@ -7,6 +7,7 @@ set -euxo pipefail
 : "${DIST_DIR:?DIST_DIR is required}"
 
 mkdir -p "$DIST_DIR"
+find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -delete
 
 gh release download "$RELEASE_VERSION" \
   --repo "$GITHUB_REPOSITORY" \

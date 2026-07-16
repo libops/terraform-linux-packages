@@ -24,8 +24,9 @@ case "$*" in
   "storage objects describe gs://test-bucket/widget/.publish.lock --format=value(generation,update_time)")
     printf '12345\t2026-01-01T00:00:00+0000\n'
     ;;
-  "storage rsync --recursive gs://test-bucket/widget "*)
-    stage_dir="$5"
+  "storage rsync --recursive --delete-unmatched-destination-objects gs://test-bucket/widget "*)
+    stage_dir="$6"
+    find "$stage_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
     mkdir -p \
       "$stage_dir/by-hash/SHA256" \
       "$stage_dir/dists/bookworm" \
