@@ -18,7 +18,10 @@ Only the repositories listed in `github_repositories` receive:
 
 If `github_actors` is non-empty, the Workload Identity provider also restricts access to those actors. Every token must additionally contain a `job_workflow_ref` from `approved_job_workflow_refs`. The approved value includes the reusable workflow repository, file, and exact 40-character commit SHA; branch and tag identities are rejected. Repository, optional actor, and exact workflow identity must all match.
 
-`libops/sitectl-isle` is intentionally absent from the default publisher allowlist until its v1 release. When the applied `github_repositories` value also omits it, the plan removes that repository's package-publisher WIF binding and managed Actions variables; it does not alter the repository itself.
+`libops/sitectl-isle` is included in the default publisher allowlist for its v1
+release. Removing any repository from the applied `github_repositories` value
+removes that repository's package-publisher WIF binding and managed Actions
+variables; it does not alter the repository itself.
 
 ### Rotating an approved publisher workflow
 
@@ -94,7 +97,10 @@ Example:
 make package GITHUB_REPOSITORY=libops/sitectl PACKAGE_NAME=sitectl RELEASE_VERSION=v1.2.3
 ```
 
-The rolling `sitectl` channel has a publisher-owned mandatory exclusion for `sitectl-isle` until its v1 release. Callers cannot disable that policy. Only the core `sitectl` channel owner may use `EXCLUDED_PACKAGE_NAMES` to request comma- or whitespace-separated canonical lowercase package names in addition to the mandatory policy; plugin publishers cannot remove other packages:
+The publisher currently has no mandatory package exclusions. Only the core
+`sitectl` channel owner may use `EXCLUDED_PACKAGE_NAMES` to request comma- or
+whitespace-separated canonical lowercase package names for an intentional
+retirement or cleanup; plugin publishers cannot remove other packages:
 
 ```bash
 make package \
@@ -106,7 +112,7 @@ make package \
 
 Every publication validates the current package name and all current `.deb` and `.rpm` artifacts before using Google Cloud. An excluded current package or artifact fails closed. After the publisher acquires the channel lock, it synchronizes an exact local snapshot that deletes destination-only stage files, and the complete existing repository must sync successfully; a failed or partial sync stops publication before signing-key access or metadata upload. The exact snapshot prevents a local or retried run from resurrecting stale artifacts. The publisher removes excluded historical artifacts from the staged repository, rebuilds and uploads replacement APT/RPM metadata, and only then deletes the excluded GCS objects. Keeping the exclusion in every publication makes interrupted cleanup self-healing: later publications rediscover and retry any unreferenced object that was not deleted.
 
-When invoked by the core channel owner, the reusable GoReleaser workflow accepts additional exclusions through its `excluded-package-names` input; plugin package names are rejected if they request any addition. GoReleaser runs in a job without OIDC permission. A dependent publication job checks out the exact commit that defines the called workflow, validates the mandatory policy, and builds a local package-tools image from that checkout before cloud authentication. Credentialed publication uses a direct environment-reading wrapper, verifies the unchanged local image ID, and never invokes GNU Make or pulls the mutable `main` image.
+When invoked by the core channel owner, the reusable GoReleaser workflow accepts exclusions through its `excluded-package-names` input; plugin package names are rejected if they request any. GoReleaser runs in a job without OIDC permission. A dependent publication job checks out the exact commit that defines the called workflow, validates the exclusion policy, and builds a local package-tools image from that checkout before cloud authentication. Credentialed publication uses a direct environment-reading wrapper, verifies the unchanged local image ID, and never invokes GNU Make or pulls the mutable `main` image.
 
 That target will:
 
@@ -228,7 +234,7 @@ No modules.
 | <a name="input_dns_zone_name"></a> [dns\_zone\_name](#input\_dns\_zone\_name) | Cloud DNS managed zone name. | `string` | `"packages-libops-io"` | no |
 | <a name="input_github_actors"></a> [github\_actors](#input\_github\_actors) | Optional GitHub actors allowed to use the provider. Leave empty to allow any actor from the approved repositories. | `set(string)` | `[]` | no |
 | <a name="input_github_owner"></a> [github\_owner](#input\_github\_owner) | GitHub organization that owns the repositories allowed to publish packages. | `string` | `"libops"` | no |
-| <a name="input_github_repositories"></a> [github\_repositories](#input\_github\_repositories) | Full GitHub repository names allowed to impersonate the publishing service account. | `set(string)` | <pre>[<br/>  "libops/sitectl",<br/>  "libops/sitectl-app-tmpl",<br/>  "libops/sitectl-archivesspace",<br/>  "libops/sitectl-drupal",<br/>  "libops/sitectl-libops",<br/>  "libops/sitectl-ojs",<br/>  "libops/sitectl-omeka-classic",<br/>  "libops/sitectl-omeka-s",<br/>  "libops/sitectl-wp"<br/>]</pre> | no |
+| <a name="input_github_repositories"></a> [github\_repositories](#input\_github\_repositories) | Full GitHub repository names allowed to impersonate the publishing service account. | `set(string)` | <pre>[<br/>  "libops/sitectl",<br/>  "libops/sitectl-app-tmpl",<br/>  "libops/sitectl-archivesspace",<br/>  "libops/sitectl-drupal",<br/>  "libops/sitectl-isle",<br/>  "libops/sitectl-libops",<br/>  "libops/sitectl-ojs",<br/>  "libops/sitectl-omeka-classic",<br/>  "libops/sitectl-omeka-s",<br/>  "libops/sitectl-wp"<br/>]</pre> | no |
 | <a name="input_org_id"></a> [org\_id](#input\_org\_id) | Google Cloud organization ID. | `string` | n/a | yes |
 | <a name="input_package_domain"></a> [package\_domain](#input\_package\_domain) | Fully qualified domain name that will serve the package repository. | `string` | `"packages.libops.io"` | no |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | Google Cloud project ID. | `string` | `"libops-linux-packages"` | no |

@@ -12,6 +12,7 @@ variable "github_repositories" {
     "libops/sitectl-app-tmpl",
     "libops/sitectl-archivesspace",
     "libops/sitectl-drupal",
+    "libops/sitectl-isle",
     "libops/sitectl-libops",
     "libops/sitectl-ojs",
     "libops/sitectl-omeka-classic",
