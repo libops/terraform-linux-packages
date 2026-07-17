@@ -3,6 +3,7 @@ github_repositories = [
   "libops/sitectl-app-tmpl",
   "libops/sitectl-archivesspace",
   "libops/sitectl-drupal",
+  "libops/sitectl-isle",
   "libops/sitectl-libops",
   "libops/sitectl-ojs",
   "libops/sitectl-omeka-classic",
@@ -16,6 +17,7 @@ github_repositories = [
 approved_job_workflow_refs = [
   "libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@481df51116aed2efd1c002ef1ef6a287699828a0",
   "libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@e1e30b58c9c566f72b22f03e637cd5218d635727",
+  "libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@8e27d95846671a9e319f1900e86a488a1d4f39b3",
 ]
 
 github_actors = [

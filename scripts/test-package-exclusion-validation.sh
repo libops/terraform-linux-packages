@@ -19,25 +19,12 @@ EXCLUDED_PACKAGE_NAMES= \
   bash "$validator" >"$tmp/repository-fallback.log"
 grep -Fq "Package sitectl is allowed" "$tmp/repository-fallback.log"
 
-if PACKAGE_NAME=sitectl-isle \
-  EXCLUDED_PACKAGE_NAMES= \
-  bash "$validator" >"$tmp/excluded.log" 2>&1; then
-  printf 'Excluded PACKAGE_NAME unexpectedly passed validation\n' >&2
-  exit 1
-fi
+PACKAGE_NAME=sitectl-isle \
+EXCLUDED_PACKAGE_NAMES= \
+  bash "$validator" >"$tmp/isle-allowed.log"
 grep -Fq \
-  "PACKAGE_NAME 'sitectl-isle' is excluded from Linux package publication" \
-  "$tmp/excluded.log"
-
-if PACKAGE_NAME=sitectl-isle \
-  EXCLUDED_PACKAGE_NAMES=sitectl-preview \
-  bash "$validator" >"$tmp/mandatory-exclusion.log" 2>&1; then
-  printf 'Caller override disabled the publisher-mandatory exclusion\n' >&2
-  exit 1
-fi
-grep -Fq \
-  "PACKAGE_NAME 'sitectl-isle' is excluded from Linux package publication" \
-  "$tmp/mandatory-exclusion.log"
+  "Package sitectl-isle is allowed; effective exclusions:" \
+  "$tmp/isle-allowed.log"
 
 if PACKAGE_NAME=sitectl-drupal \
   EXCLUDED_PACKAGE_NAMES=sitectl \

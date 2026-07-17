@@ -9,9 +9,7 @@ package_name_is_valid() {
   [[ "$package_name" =~ ^[a-z0-9][a-z0-9+.-]*$ ]]
 }
 
-readonly -a publisher_mandatory_excluded_package_names=(
-  "sitectl-isle"
-)
+readonly -a publisher_mandatory_excluded_package_names=()
 
 append_excluded_package_name() {
   local package_name="$1"
