@@ -17,6 +17,9 @@ for terraform_file in "$tfvars_example"; do
   grep -Fq \
     "libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@8e27d95846671a9e319f1900e86a488a1d4f39b3" \
     "$terraform_file"
+  grep -Fq \
+    "libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@77724fe807ede3e0808d4556f47e4ad0ae266bac" \
+    "$terraform_file"
   if grep -Eq 'approved_job_workflow_refs.*refs/(heads|tags)/' "$terraform_file"; then
     printf 'Package publisher WIF allowlist must not approve a branch or tag ref: %s\n' \
       "$terraform_file" >&2
