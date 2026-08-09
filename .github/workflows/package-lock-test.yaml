@@ -6,6 +6,7 @@ on:
       - "Makefile"
       - "scripts/download-release-assets.sh"
       - "scripts/package-exclusions.sh"
+      - "scripts/package-lock-age.py"
       - "scripts/publish-package-repo.sh"
       - "scripts/publish-release-from-environment.sh"
       - "scripts/test-package-exclusion-validation.sh"
@@ -23,6 +24,7 @@ on:
       - "Makefile"
       - "scripts/download-release-assets.sh"
       - "scripts/package-exclusions.sh"
+      - "scripts/package-lock-age.py"
       - "scripts/publish-package-repo.sh"
       - "scripts/publish-release-from-environment.sh"
       - "scripts/test-package-exclusion-validation.sh"
@@ -64,6 +66,9 @@ jobs:
           scripts/test-publisher-allowlist.sh
           scripts/test-wif-workflow-allowlist.sh
           scripts/validate-package-exclusions.sh
+
+      - name: Check package lock age program
+        run: python3 -m py_compile scripts/package-lock-age.py
 
       - name: Test package exclusion validation
         run: bash scripts/test-package-exclusion-validation.sh

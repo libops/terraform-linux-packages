@@ -9,9 +9,15 @@ shopt -s nullglob
 : "${APTLY_GPG_KEY_ID:?APTLY_GPG_KEY_ID is required}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+lock_age_program="$script_dir/package-lock-age.py"
 # shellcheck source=package-exclusions.sh
 source "$script_dir/package-exclusions.sh"
 prepare_package_exclusions
+
+if [ ! -f "$lock_age_program" ] || [ -L "$lock_age_program" ] || [ ! -r "$lock_age_program" ]; then
+  printf 'Package lock age program is missing or unsafe: %s\n' "$lock_age_program" >&2
+  exit 1
+fi
 
 APTLY_DISTRIBUTIONS="${APTLY_DISTRIBUTIONS:-bookworm}"
 APTLY_COMPONENT="${APTLY_COMPONENT:-main}"
@@ -213,14 +219,7 @@ acquire_lock() {
     fi
 
     if [ -n "$generation" ] && [ -n "$update_time" ]; then
-      age="$(python3 - "$update_time" "$now" <<'PY'
-from datetime import datetime
-import sys
-updated = datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
-now = int(sys.argv[2])
-print(max(0, now - int(updated.timestamp())))
-PY
-)"
+      age="$(python3 "$lock_age_program" "$update_time" "$now")"
       if [ "$age" -ge "$LOCK_STALE_SECONDS" ]; then
         printf 'Removing stale publish lock generation %s at %s\n' "$generation" "$lock_path"
         gcloud storage rm "$lock_path" --if-generation-match="$generation" >/dev/null 2>&1 || true
@@ -478,66 +477,20 @@ validate_current_release_artifacts() {
 }
 
 stage_package_artifacts() {
-  find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -exec cp {} "$PACKAGE_REPO_STAGE_DIR"/ \;
-}
-
-current_package_names=()
-
-append_current_package_name() {
-  local package_name="$1"
-  local current_package_name
-
-  [ -n "$package_name" ] || return 0
-
-  for current_package_name in "${current_package_names[@]}"; do
-    if [ "$current_package_name" = "$package_name" ]; then
-      return 0
-    fi
-  done
-
-  current_package_names+=("$package_name")
-}
-
-collect_current_package_names() {
-  local package_file
-
-  current_package_names=()
+  local package_file staged_file
 
   while IFS= read -r -d '' package_file; do
-    append_current_package_name "$(package_file_name "$package_file")"
+    staged_file="$PACKAGE_REPO_STAGE_DIR/${package_file##*/}"
+    if [ -f "$staged_file" ]; then
+      if ! cmp -s "$package_file" "$staged_file"; then
+        printf 'Refusing to replace published package artifact %s with different content\n' \
+          "${package_file##*/}" >&2
+        return 1
+      fi
+      continue
+    fi
+    cp "$package_file" "$staged_file"
   done < <(find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
-
-  if [ ${#current_package_names[@]} -eq 0 ]; then
-    append_current_package_name "$PACKAGE_NAME"
-  fi
-}
-
-is_current_package_name() {
-  local package_name="$1"
-  local current_package_name
-
-  [ -n "$package_name" ] || return 1
-
-  for current_package_name in "${current_package_names[@]}"; do
-    if [ "$current_package_name" = "$package_name" ]; then
-      return 0
-    fi
-  done
-
-  return 1
-}
-
-prune_stage_package_history() {
-  local staged_package package_name
-
-  collect_current_package_names
-
-  while IFS= read -r -d '' staged_package; do
-    package_name="$(package_file_name "$staged_package")"
-    if is_current_package_name "$package_name"; then
-      rm -f "$staged_package"
-    fi
-  done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
 }
 
 prune_excluded_package_artifacts() {
@@ -601,10 +554,9 @@ if ! gcloud storage rsync \
 fi
 rm -f "$PACKAGE_REPO_STAGE_DIR/.publish.lock"
 
-log_step "Pruning stale package artifacts"
+log_step "Pruning explicitly excluded package artifacts"
 prune_stage_release_history
 prune_excluded_package_artifacts
-prune_stage_package_history
 stage_package_artifacts
 
 log_step "Collecting package artifacts"

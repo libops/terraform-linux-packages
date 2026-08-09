@@ -34,6 +34,12 @@ case "$*" in
     stage_dir="$6"
     find "$stage_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
     mkdir -p "$stage_dir/rpm" "$stage_dir/dists/bookworm"
+    printf 'historical core deb\n' >"$stage_dir/sitectl_0.9.0_amd64.deb"
+    printf 'historical core rpm\n' >"$stage_dir/sitectl-0.9.0-1.x86_64.rpm"
+    if [ "${MOCK_DIFFERENT_CURRENT_PACKAGE:-false}" = "true" ]; then
+      printf 'different current deb\n' >"$stage_dir/sitectl_1.0.0_amd64.deb"
+      printf 'different current rpm\n' >"$stage_dir/sitectl-1.0.0-1.x86_64.rpm"
+    fi
     printf 'allowed old deb\n' >"$stage_dir/sitectl-libops_1.3.0_amd64.deb"
     printf 'allowed old rpm\n' >"$stage_dir/sitectl-libops-1.3.0-1.x86_64.rpm"
     printf 'excluded old deb\n' >"$stage_dir/sitectl-isle_0.19.0_amd64.deb"
@@ -221,6 +227,8 @@ fi
 
 grep -Fq "Package: sitectl" "$tmp/uploaded-metadata/Packages"
 grep -Fq "Package: sitectl-libops" "$tmp/uploaded-metadata/Packages"
+grep -Fq "sitectl_0.9.0_amd64.deb" "$tmp/uploaded-metadata/Packages"
+grep -Fq "sitectl-0.9.0-1.x86_64.rpm" "$tmp/uploaded-metadata/rpm/repodata/primary.xml"
 grep -Fq "sitectl-1.0.0-1.x86_64.rpm" "$tmp/uploaded-metadata/rpm/repodata/primary.xml"
 grep -Fq "sitectl-libops-1.3.0-1.x86_64.rpm" "$tmp/uploaded-metadata/rpm/repodata/primary.xml"
 
@@ -255,6 +263,31 @@ fi
 grep -Fq "has excluded package name 'sitectl-isle'" "$tmp/rejected-publisher.log"
 if [ -s "$tmp/rejected-gcloud.log" ]; then
   printf 'Excluded current release artifact reached Google Cloud operations\n' >&2
+  exit 1
+fi
+
+mkdir -p "$tmp/replaced-stage"
+: >"$tmp/replaced-gcloud.log"
+if PATH="$tmp/bin:$PATH" \
+  MOCK_GCLOUD_LOG="$tmp/replaced-gcloud.log" \
+  MOCK_DIFFERENT_CURRENT_PACKAGE=true \
+  DIST_DIR="$tmp/dist" \
+  GCLOUD_PROJECT=test-project \
+  GCS_BUCKET=test-bucket \
+  GCS_BUCKET_PREFIX=sitectl \
+  PACKAGE_NAME=sitectl \
+  EXCLUDED_PACKAGE_NAMES=sitectl-isle \
+  PACKAGE_REPO_STAGE_DIR="$tmp/replaced-stage" \
+  APTLY_GPG_KEY_ID=test-key \
+  LOCK_HEARTBEAT_SECONDS=0 \
+  bash "$repo_root/scripts/publish-package-repo.sh" \
+    >"$tmp/replaced-publisher.log" 2>&1; then
+  printf 'Different content replaced an existing package version\n' >&2
+  exit 1
+fi
+grep -Fq 'Refusing to replace published package artifact ' "$tmp/replaced-publisher.log"
+if grep -Fq 'secrets versions access' "$tmp/replaced-gcloud.log"; then
+  printf 'Immutable package rejection reached signing-key access\n' >&2
   exit 1
 fi
 
