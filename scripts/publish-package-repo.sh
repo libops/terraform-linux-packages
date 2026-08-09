@@ -727,8 +727,11 @@ log_step "Staging package assets for upload"
 stage_repository_assets_for_upload
 
 log_step "Uploading package assets to $destination"
-gcloud storage rsync \
+CLOUDSDK_STORAGE_PROCESS_COUNT=1 \
+  CLOUDSDK_STORAGE_THREAD_COUNT=1 \
+  gcloud storage rsync \
   --recursive \
+  --checksums-only \
   --cache-control="$PACKAGE_ASSET_CACHE_CONTROL" \
   "$PACKAGE_REPO_ASSET_DIR" \
   "$destination"
