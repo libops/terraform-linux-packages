@@ -47,8 +47,10 @@ case "$*" in
     printf 'excluded nested rpm\n' >"$stage_dir/rpm/sitectl-isle-0.19.0-1.x86_64.rpm"
     printf 'stale metadata\n' >"$stage_dir/dists/bookworm/Release"
     ;;
-  "storage rsync --recursive --cache-control=asset-contract "*)
-    asset_dir="$5"
+  "storage rsync --recursive --checksums-only --cache-control=asset-contract "*)
+    test "${CLOUDSDK_STORAGE_PROCESS_COUNT:-}" = "1"
+    test "${CLOUDSDK_STORAGE_THREAD_COUNT:-}" = "1"
+    asset_dir="$6"
     while IFS= read -r -d '' asset_file; do
       relative_path="${asset_file#"$asset_dir"/}"
       printf 'ASSET %s\n' "$relative_path" >>"$log_file"
