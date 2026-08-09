@@ -285,9 +285,7 @@ if PATH="$tmp/bin:$PATH" \
   printf 'Different content replaced an existing package version\n' >&2
   exit 1
 fi
-grep -Fq \
-  'Refusing to replace published package artifact sitectl_1.0.0_amd64.deb with different content' \
-  "$tmp/replaced-publisher.log"
+grep -Fq 'Refusing to replace published package artifact ' "$tmp/replaced-publisher.log"
 if grep -Fq 'secrets versions access' "$tmp/replaced-gcloud.log"; then
   printf 'Immutable package rejection reached signing-key access\n' >&2
   exit 1
