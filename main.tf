@@ -85,7 +85,7 @@ resource "google_storage_bucket" "packages" {
   public_access_prevention    = "inherited"
 
   versioning {
-    enabled = false
+    enabled = true
   }
 
   depends_on = [google_project_service.service]
