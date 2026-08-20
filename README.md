@@ -110,7 +110,21 @@ make package \
   EXCLUDED_PACKAGE_NAMES="sitectl-preview"
 ```
 
-Every publication validates the current package name and all current `.deb` and `.rpm` artifacts before using Google Cloud. An excluded current package or artifact fails closed. After the publisher acquires the channel lock, it synchronizes an exact local snapshot that deletes destination-only stage files, and the complete existing repository must sync successfully; a failed or partial sync stops publication before signing-key access or metadata upload. The exact snapshot prevents a local or retried run from resurrecting stale artifacts. The publisher removes excluded historical artifacts from the staged repository, rebuilds and uploads replacement APT/RPM metadata, and only then deletes the excluded GCS objects. Keeping the exclusion in every publication makes interrupted cleanup self-healing: later publications rediscover and retry any unreferenced object that was not deleted.
+Every publication validates the current package name and all current `.deb` and `.rpm` artifacts before using Google Cloud. An excluded current package or artifact fails closed. Each package prefix is a rolling channel: the publisher builds metadata from only the requested GitHub release and overwrites stable, architecture-specific package objects. It does not list or download the existing bucket contents, retain old versions in repository metadata, or enable GCS object versioning. GitHub Releases remain the source for rebuilding a previous release if an emergency recovery is required.
+
+APT and DNF require separately addressable package and signed metadata objects, so the served repository cannot be replaced with a single zip archive. Stable object names provide the same bounded-transfer behavior without adding an extraction service in front of the bucket.
+
+### One-time rolling-channel cutover
+
+After applying the Terraform change and before the first rolling publication, reset each package prefix once and immediately republish its latest release. The reset is intentionally a dry run unless `APPLY=1` is supplied:
+
+```bash
+make reset-package-prefix GCS_BUCKET=libops-linux-packages PACKAGE_NAME=sitectl
+make reset-package-prefix GCS_BUCKET=libops-linux-packages PACKAGE_NAME=sitectl APPLY=1
+make package GITHUB_REPOSITORY=libops/sitectl PACKAGE_NAME=sitectl RELEASE_VERSION=vX.Y.Z
+```
+
+The package prefix is unavailable between reset and republication, so perform the last two commands together. Repeat for each plugin prefix. The reset is a migration operation only; normal releases never list or download existing bucket objects. The bucket lifecycle rule removes legacy noncurrent object generations after one day.
 
 When invoked by the core channel owner, the reusable GoReleaser workflow accepts exclusions through its `excluded-package-names` input; plugin package names are rejected if they request any. GoReleaser runs in a job without OIDC permission. A dependent publication job checks out the exact commit that defines the called workflow, validates the exclusion policy, and builds a local package-tools image from that checkout before cloud authentication. Credentialed publication uses a direct environment-reading wrapper, verifies the unchanged local image ID, and never invokes GNU Make or pulls the mutable `main` image.
 

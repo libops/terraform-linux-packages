@@ -30,8 +30,6 @@ case "$*" in
       printf '12345\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S+0000)"
     fi
     ;;
-  "storage rsync --recursive --delete-unmatched-destination-objects gs://test-bucket/sitectl "*)
-    ;;
   "storage rm gs://test-bucket/sitectl/.publish.lock --if-generation-match=12345")
     ;;
   *)

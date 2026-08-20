@@ -84,8 +84,23 @@ resource "google_storage_bucket" "packages" {
   uniform_bucket_level_access = true
   public_access_prevention    = "inherited"
 
+  # This bucket is a rolling package channel, not an artifact archive. GitHub
+  # Releases retain the source packages; keeping every overwritten GCS object
+  # generation multiplies storage for no package-manager benefit.
   versioning {
     enabled = false
+  }
+
+  # Disabling versioning does not remove generations that already exist.
+  # Expire those legacy noncurrent generations after the rolling-channel
+  # migration has made them unnecessary.
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      days_since_noncurrent_time = 1
+    }
   }
 
   depends_on = [google_project_service.service]

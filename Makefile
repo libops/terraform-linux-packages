@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -xeo pipefail -c
 
-.PHONY: package validate-package-exclusions download-release-assets publish-package-repo package-tools-image package-tools-image-local create-aptly-gpg-key print-aptly-gpg-key-id sync-aptly-gpg-key-id docs
+.PHONY: package reset-package-prefix validate-package-exclusions download-release-assets publish-package-repo package-tools-image package-tools-image-local create-aptly-gpg-key print-aptly-gpg-key-id sync-aptly-gpg-key-id docs
 
 ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 TFVARS_PATH ?= $(ROOT_DIR)/terraform.tfvars
@@ -39,6 +39,12 @@ APTLY_GPG_KEY_EXPIRE ?= 2y
 APTLY_GPG_ARTIFACTS_DIR ?= $(ROOT_DIR)/.out/gpg
 
 package: validate-package-exclusions download-release-assets publish-package-repo
+
+reset-package-prefix:
+	@/bin/bash "$(ROOT_DIR)/scripts/reset-package-prefix.sh" \
+		--bucket "$(GCS_BUCKET)" \
+		--prefix "$(PACKAGE_NAME)" \
+		$(if $(APPLY),--apply,)
 
 package-tools-image:
 	docker pull "$(PACKAGE_TOOLS_IMAGE)"
