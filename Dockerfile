@@ -1,4 +1,4 @@
-FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:slim@sha256:288bee65409ada9168944d1af8050247b556f8c0aeef97a3889ea05ee6294d7c
+FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:slim@sha256:2a52a0a58a2a267535f862bdb2026a5ababdb382ad1c49a06dd21a94df1cc4fc
 
 ENV CLOUDSDK_STORAGE_USE_GCLOUD_CRC32C=false
 
