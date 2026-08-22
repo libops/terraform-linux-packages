@@ -24,6 +24,8 @@ case "$*" in
   "storage objects describe gs://test-bucket/widget/.publish.lock --format=value(generation,update_time)")
     printf '12345\t2026-01-01T00:00:00+0000\n'
     ;;
+  "storage rsync --recursive --checksums-only gs://test-bucket/widget "*)
+    ;;
   "storage rsync --recursive --checksums-only --cache-control=asset-contract "*)
     test "${CLOUDSDK_STORAGE_PROCESS_COUNT:-}" = "1"
     test "${CLOUDSDK_STORAGE_THREAD_COUNT:-}" = "1"
@@ -43,6 +45,10 @@ case "$*" in
     ;;
   "storage cp --cache-control=metadata-contract "*)
     test -f "$4"
+    ;;
+  "storage rsync --recursive --checksums-only --delete-unmatched-destination-objects --exclude="*)
+    test "${CLOUDSDK_STORAGE_PROCESS_COUNT:-}" = "1"
+    test "${CLOUDSDK_STORAGE_THREAD_COUNT:-}" = "1"
     ;;
   "secrets versions access latest "*)
     printf 'test secret\n'
@@ -124,10 +130,8 @@ grep -Fq "storage rsync --recursive --checksums-only --cache-control=asset-contr
 grep -Fq "ASSET widget-x86_64.rpm" "$gcloud_log"
 grep -Fq "ASSET rpm/widget-x86_64.rpm" "$gcloud_log"
 
-if grep -Fq "storage rsync --recursive --delete-unmatched-destination-objects gs://" "$gcloud_log"; then
-  printf 'Publisher downloaded the existing repository\n' >&2
-  exit 1
-fi
+grep -Fq "storage rsync --recursive --checksums-only gs://test-bucket/widget " "$gcloud_log"
+grep -Fq "storage rsync --recursive --checksums-only --delete-unmatched-destination-objects" "$gcloud_log"
 
 for metadata_path in \
   "rpm/repodata/primary.xml.gz" \

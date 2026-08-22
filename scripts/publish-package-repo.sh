@@ -484,11 +484,35 @@ stage_package_artifacts() {
   done < <(find "$DIST_DIR" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
 }
 
+prune_current_package_artifacts() {
+  local staged_package package_name
+
+  while IFS= read -r -d '' staged_package; do
+    package_name="$(package_file_name "$staged_package")"
+    if [ "$package_name" = "$PACKAGE_NAME" ]; then
+      rm -f "$staged_package"
+    fi
+  done < <(find "$PACKAGE_REPO_STAGE_DIR" -type f \( -name "*.deb" -o -name "*.rpm" \) -print0)
+}
+
 validate_current_release_artifacts
 acquire_lock
 
-log_step "Preparing rolling package repository"
+log_step "Syncing the shared rolling repository from $destination"
 find "$PACKAGE_REPO_STAGE_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+if ! gcloud storage rsync \
+  --recursive \
+  --checksums-only \
+  "$destination" \
+  "$PACKAGE_REPO_STAGE_DIR"; then
+  printf 'Unable to sync the complete shared package repository from %s; refusing to replace metadata from partial state.\n' \
+    "$destination" >&2
+  exit 1
+fi
+rm -f "$PACKAGE_REPO_STAGE_DIR/.publish.lock"
+
+log_step "Replacing rolling artifacts for $PACKAGE_NAME"
+prune_current_package_artifacts
 stage_package_artifacts
 
 log_step "Collecting package artifacts"
@@ -664,6 +688,17 @@ CLOUDSDK_STORAGE_PROCESS_COUNT=1 \
 
 log_step "Uploading repository metadata to $destination"
 upload_deferred_repository_metadata
+
+log_step "Deleting objects absent from the rebuilt rolling repository"
+CLOUDSDK_STORAGE_PROCESS_COUNT=1 \
+  CLOUDSDK_STORAGE_THREAD_COUNT=1 \
+  gcloud storage rsync \
+  --recursive \
+  --checksums-only \
+  --delete-unmatched-destination-objects \
+  --exclude='^\.publish\.lock$' \
+  "$PACKAGE_REPO_STAGE_DIR" \
+  "$destination"
 
 invalidate_cdn_cache
 
