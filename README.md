@@ -110,21 +110,22 @@ make package \
   EXCLUDED_PACKAGE_NAMES="sitectl-preview"
 ```
 
-Every publication validates the current package name and all current `.deb` and `.rpm` artifacts before using Google Cloud. An excluded current package or artifact fails closed. Each package prefix is a rolling channel: the publisher builds metadata from only the requested GitHub release and overwrites stable, architecture-specific package objects. It does not list or download the existing bucket contents, retain old versions in repository metadata, or enable GCS object versioning. GitHub Releases remain the source for rebuilding a previous release if an emergency recovery is required.
+Every publication validates the current package name and all current `.deb` and `.rpm` artifacts before using Google Cloud. An excluded current package or artifact fails closed. Core `sitectl` and all `sitectl-*` plugins share the `sitectl` prefix, one signing key, and one APT source. After acquiring the shared lock, the publisher downloads the bounded current repository, replaces the releasing package's stable architecture-specific objects, rebuilds APT and RPM metadata from all current packages, and deletes objects absent from the rebuilt repository. A failed repository download stops before signing-key access or publication.
 
-APT and DNF require separately addressable package and signed metadata objects, so the served repository cannot be replaced with a single zip archive. Stable object names provide the same bounded-transfer behavior without adding an extraction service in front of the bucket.
+The live repository retains only the latest version of each package and architecture; required APT and RPM layout copies are regenerated from that set. GCS object versioning remains disabled, and the lifecycle rule removes legacy noncurrent generations after one day. GitHub Releases are the artifact archive and rollback source. This keeps storage and per-release transfer bounded by the current package matrix instead of release history.
 
 ### One-time rolling-channel cutover
 
-After applying the Terraform change and before the first rolling publication, reset each package prefix once and immediately republish its latest release. The reset is intentionally a dry run unless `APPLY=1` is supplied:
+If a repository still contains historical package objects, reset the shared prefix once and immediately republish the latest core and plugin releases. The reset is intentionally a dry run unless `APPLY=1` is supplied:
 
 ```bash
 make reset-package-prefix GCS_BUCKET=libops-linux-packages PACKAGE_NAME=sitectl
 make reset-package-prefix GCS_BUCKET=libops-linux-packages PACKAGE_NAME=sitectl APPLY=1
-make package GITHUB_REPOSITORY=libops/sitectl PACKAGE_NAME=sitectl RELEASE_VERSION=vX.Y.Z
+make package GITHUB_REPOSITORY=libops/sitectl PACKAGE_NAME=sitectl RELEASE_VERSION=vX.Y.Z GCS_BUCKET_PREFIX=sitectl
+# Republish each plugin with the same GCS_BUCKET_PREFIX=sitectl.
 ```
 
-The package prefix is unavailable between reset and republication, so perform the last two commands together. Repeat for each plugin prefix. The reset is a migration operation only; normal releases never list or download existing bucket objects. The bucket lifecycle rule removes legacy noncurrent object generations after one day.
+The package prefix is unavailable between reset and republication, so perform the reset and complete republish together. There is no per-plugin prefix to reset. The reset is a migration operation only; normal releases preserve the latest artifacts for all other packages while replacing the package being released.
 
 When invoked by the core channel owner, the reusable GoReleaser workflow accepts exclusions through its `excluded-package-names` input; plugin package names are rejected if they request any. GoReleaser runs in a job without OIDC permission. A dependent publication job checks out the exact commit that defines the called workflow, validates the exclusion policy, and builds a local package-tools image from that checkout before cloud authentication. Credentialed publication uses a direct environment-reading wrapper, verifies the unchanged local image ID, and never invokes GNU Make or pulls the mutable `main` image.
 
