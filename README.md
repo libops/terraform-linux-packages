@@ -16,29 +16,21 @@ Only the repositories listed in `github_repositories` receive:
 - `LIBOPS_PACKAGES_APTLY_GPG_PRIVATE_KEY_SECRET`
 - `LIBOPS_PACKAGES_APTLY_GPG_PASSPHRASE_SECRET`
 
-If `github_actors` is non-empty, the Workload Identity provider also restricts access to those actors. Every token must additionally contain a `job_workflow_ref` from `approved_job_workflow_refs`. The approved value includes the reusable workflow repository, file, and exact 40-character commit SHA; branch and tag identities are rejected. Repository, optional actor, and exact workflow identity must all match.
+If `github_actors` is non-empty, the Workload Identity provider also restricts access to those actors. Every token must additionally contain a `job_workflow_ref` from `approved_job_workflow_refs`. The approved value names a reviewed LibOps reusable workflow and managed branch or release channel. Repository, optional actor, and managed workflow identity must all match; the credentialed job uses GitHub's runtime `job.workflow_sha` as the exact publication evidence.
 
 `libops/sitectl-isle` is included in the default publisher allowlist for its v1
 release. Removing any repository from the applied `github_repositories` value
 removes that repository's package-publisher WIF binding and managed Actions
 variables; it does not alter the repository itself.
 
-### Rotating an approved publisher workflow
+### Managing approved publisher workflows
 
 `approved_job_workflow_refs` must cover both active publication paths:
 
-- `libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@<sha>` for the direct core release workflow
-- `libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@<sha>` for the shared plugin release workflow
+- `libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@refs/heads/main` for the direct core release workflow
+- `libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@refs/heads/main` for the shared plugin release workflow
 
-Workflow identity changes and WIF changes cannot be made atomically across repositories. Use this sequence so existing releases remain authorized without granting a mutable identity:
-
-1. Merge the replacement reusable workflow and record its exact merge commit SHA.
-2. Add its exact `job_workflow_ref` to `approved_job_workflow_refs` in the applied `terraform.tfvars`, alongside every currently active SHA.
-3. Run `terraform plan` and verify that the Workload Identity provider condition adds only the intended exact identity, then apply.
-4. Update direct or plugin caller workflows to pin the newly approved SHA and verify a package publication.
-5. Remove the superseded workflow identity from `approved_job_workflow_refs` and apply again only after every caller has migrated.
-
-For the shared plugin path, merge the shared workflow first, approve its resulting exact SHA here, and only then update plugin callers. This variable is required and intentionally has no Terraform default. The example values are migration anchors for the currently active direct and shared workflows; the applied `terraform.tfvars` must be updated after each workflow merge.
+Review and protect the managed source branches as privileged publication code. A normal LibOps workflow update needs no caller or WIF pin rotation: merge it, let callers consume `main`, and retain the resolved workflow commit from the hosted run. When introducing a new workflow path or managed release channel, add that exact ref to `approved_job_workflow_refs`, verify the plan changes only the intended WIF identity, apply it, and only then move callers to that channel. This variable remains required and has no Terraform default.
 
 ## Usage
 
@@ -110,22 +102,7 @@ make package \
   EXCLUDED_PACKAGE_NAMES="sitectl-preview"
 ```
 
-Every publication validates the current package name and all current `.deb` and `.rpm` artifacts before using Google Cloud. An excluded current package or artifact fails closed. Core `sitectl` and all `sitectl-*` plugins share the `sitectl` prefix, one signing key, and one APT source. After acquiring the shared lock, the publisher downloads the bounded current repository, replaces the releasing package's stable architecture-specific objects, rebuilds APT and RPM metadata from all current packages, and deletes objects absent from the rebuilt repository. A failed repository download stops before signing-key access or publication.
-
-The live repository retains only the latest version of each package and architecture; required APT and RPM layout copies are regenerated from that set. GCS object versioning remains disabled, and the lifecycle rule removes legacy noncurrent generations after one day. GitHub Releases are the artifact archive and rollback source. This keeps storage and per-release transfer bounded by the current package matrix instead of release history.
-
-### One-time rolling-channel cutover
-
-If a repository still contains historical package objects, reset the shared prefix once and immediately republish the latest core and plugin releases. The reset is intentionally a dry run unless `APPLY=1` is supplied:
-
-```bash
-make reset-package-prefix GCS_BUCKET=libops-linux-packages PACKAGE_NAME=sitectl
-make reset-package-prefix GCS_BUCKET=libops-linux-packages PACKAGE_NAME=sitectl APPLY=1
-make package GITHUB_REPOSITORY=libops/sitectl PACKAGE_NAME=sitectl RELEASE_VERSION=vX.Y.Z GCS_BUCKET_PREFIX=sitectl
-# Republish each plugin with the same GCS_BUCKET_PREFIX=sitectl.
-```
-
-The package prefix is unavailable between reset and republication, so perform the reset and complete republish together. There is no per-plugin prefix to reset. The reset is a migration operation only; normal releases preserve the latest artifacts for all other packages while replacing the package being released.
+Every publication validates the current package name and all current `.deb` and `.rpm` artifacts before using Google Cloud. An excluded current package or artifact fails closed. Core `sitectl` and all `sitectl-*` plugins share the `sitectl` prefix, one signing key, and one APT source. After the publisher acquires the shared lock, it synchronizes the complete existing repository; a failed or partial sync stops publication before signing-key access or metadata upload. Published versions for core and every plugin are retained and included in replacement APT/RPM metadata so exact workload pins and rollback remain installable after a newer release. Republishing an existing filename with different bytes is rejected before signing-key access. Bucket object versioning provides an additional recovery layer for accidental replacement or deletion. The publisher removes only explicitly excluded historical artifacts from the staged repository, rebuilds and uploads replacement metadata, and only then deletes those excluded GCS objects. Keeping an intentional exclusion in every publication makes interrupted cleanup self-healing: later publications rediscover and retry any unreferenced object that was not deleted.
 
 When invoked by the core channel owner, the reusable GoReleaser workflow accepts exclusions through its `excluded-package-names` input; plugin package names are rejected if they request any. GoReleaser runs in a job without OIDC permission. A dependent publication job checks out the exact commit that defines the called workflow, validates the exclusion policy, and builds a local package-tools image from that checkout before cloud authentication. Credentialed publication uses a direct environment-reading wrapper, verifies the unchanged local image ID, and never invokes GNU Make or pulls the mutable `main` image.
 
@@ -238,7 +215,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_approved_job_workflow_refs"></a> [approved\_job\_workflow\_refs](#input\_approved\_job\_workflow\_refs) | Exact reusable-workflow identities allowed to publish packages. Keep active direct and shared workflow SHAs during migrations; branch and tag refs are rejected. | `set(string)` | n/a | yes |
+| <a name="input_approved_job_workflow_refs"></a> [approved\_job\_workflow\_refs](#input\_approved\_job\_workflow\_refs) | Managed LibOps reusable-workflow refs allowed to publish packages. Runtime publication resolves and records the exact workflow commit. | `set(string)` | n/a | yes |
 | <a name="input_aptly_gpg_key_id"></a> [aptly\_gpg\_key\_id](#input\_aptly\_gpg\_key\_id) | GPG key ID Aptly uses to sign the published repository. | `string` | `""` | no |
 | <a name="input_aptly_gpg_passphrase_secret_id"></a> [aptly\_gpg\_passphrase\_secret\_id](#input\_aptly\_gpg\_passphrase\_secret\_id) | Secret Manager secret ID that stores the Aptly GPG key passphrase. | `string` | `"aptly-gpg-passphrase"` | no |
 | <a name="input_aptly_gpg_private_key_secret_id"></a> [aptly\_gpg\_private\_key\_secret\_id](#input\_aptly\_gpg\_private\_key\_secret\_id) | Secret Manager secret ID that stores the armored Aptly private key. | `string` | `"aptly-gpg-private-key"` | no |

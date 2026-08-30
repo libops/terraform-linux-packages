@@ -1,6 +1,4 @@
-FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:slim@sha256:288bee65409ada9168944d1af8050247b556f8c0aeef97a3889ea05ee6294d7c
-
-ENV CLOUDSDK_STORAGE_USE_GCLOUD_CRC32C=false
+FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:slim@sha256:288bee65409ada9168944d1af8050247b556f8c0aeef97a3889ea05ee6294d7c AS build
 
 RUN apt-get update \
   && apt-get upgrade -y \
@@ -9,7 +7,22 @@ RUN apt-get update \
     /usr/lib/google-cloud-sdk/platform/bundledpythonunix/bin/python3 -m pip install \
       --no-cache-dir \
       --only-binary=:all: \
-      cryptography==48.0.1; \
+      cryptography==50.0.0 \
+      msgpack==1.2.1 \
+      pyopenssl==26.4.0 \
+      setuptools==80.10.2 \
+      && /usr/lib/google-cloud-sdk/platform/bundledpythonunix/bin/python3 -m pip check \
+      && /usr/lib/google-cloud-sdk/platform/bundledpythonunix/bin/python3 -m pip uninstall --yes pip setuptools \
+      && gcloud version >/dev/null \
+      && gcloud storage --help >/dev/null; \
     fi \
   && rm -f /usr/lib/google-cloud-sdk/bin/gcloud-crc32c \
   && rm -rf /var/lib/apt/lists/*
+
+# Copy the merged, patched filesystem into one final layer so scanners and
+# downstream consumers cannot recover superseded vulnerable Python packages
+# from the external base image's lower layers.
+FROM scratch
+COPY --from=build / /
+
+ENV CLOUDSDK_STORAGE_USE_GCLOUD_CRC32C=false

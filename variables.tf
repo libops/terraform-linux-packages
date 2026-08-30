@@ -28,15 +28,15 @@ variable "github_actors" {
 }
 
 variable "approved_job_workflow_refs" {
-  description = "Exact reusable-workflow identities allowed to publish packages. Keep active direct and shared workflow SHAs during migrations; branch and tag refs are rejected."
+  description = "Managed LibOps reusable-workflow refs allowed to publish packages. Runtime publication resolves and records the exact workflow commit."
   type        = set(string)
 
   validation {
     condition = length(var.approved_job_workflow_refs) > 0 && alltrue([
       for workflow_ref in var.approved_job_workflow_refs :
-      can(regex("^libops/(terraform-linux-packages|[.]github)/[.]github/workflows/(reusable-goreleaser|sitectl-plugin-goreleaser)[.]ya?ml@[0-9a-f]{40}$", workflow_ref))
+      can(regex("^libops/(terraform-linux-packages|[.]github)/[.]github/workflows/(reusable-goreleaser|sitectl-plugin-goreleaser)[.]ya?ml@refs/(heads|tags)/[A-Za-z0-9._/-]+$", workflow_ref))
     ])
-    error_message = "approved_job_workflow_refs must contain one or more exact 40-character SHA identities for the LibOps direct or shared package publisher workflow."
+    error_message = "approved_job_workflow_refs must contain one or more managed branch or tag identities for the LibOps direct or shared package publisher workflow."
   }
 }
 
