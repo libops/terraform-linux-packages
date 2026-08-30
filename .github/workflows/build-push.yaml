@@ -61,13 +61,12 @@ jobs:
 
   run:
     if: github.ref == 'refs/heads/main'
-    uses: libops/.github/.github/workflows/build-push.yaml@a86300fb8020d0f7141bb9f833d89b5dbd7aa4d7 # guarded-signed-image-publisher
+    uses: libops/.github/.github/workflows/build-push.yaml@main
     with:
       ref: ${{ github.sha }}
       expected-main-sha: ${{ github.ref == 'refs/heads/main' && github.sha || '' }}
       scan: true
       sign: true
-      certificate-identity: https://github.com/libops/.github/.github/workflows/build-push.yaml@a86300fb8020d0f7141bb9f833d89b5dbd7aa4d7
     permissions:
       contents: read
       packages: write

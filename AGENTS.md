@@ -6,17 +6,18 @@ operator contract:
 
 - one APT source and one `sitectl-archive-keyring` install core and plugins;
   never create per-plugin prefixes, sources, or keyrings;
-- repository metadata must contain the latest release of core and every
-  published plugin, even when only one package is being released;
-- keep only the latest live package version for each package and architecture;
-  GitHub Releases are the artifact archive and rollback source;
-- use stable source-object names, rebuild APT and RPM metadata from the complete
-  current set, and delete objects absent from that rebuilt repository so old
-  versions cannot accumulate in GCS;
+- repository metadata must contain every published version of core and every
+  plugin so an exact previous-known-good version remains directly installable;
+- treat package filenames and bytes as immutable: an existing filename may be
+  republished only when its bytes are identical, and changed bytes must fail
+  before signing-key access or any repository write;
+- rebuild APT and RPM metadata from the complete retained package set; delete a
+  package object only through an explicit exclusion after replacement metadata
+  no longer references it;
 - retain the repository lock while reading, rebuilding, publishing, and pruning
   the shared prefix; a partial read must fail before metadata is replaced;
-- keep GCS object versioning disabled and retain the short lifecycle cleanup for
-  any legacy noncurrent generations.
+- keep GCS object versioning enabled as an additional recovery layer for an
+  accidental object replacement or deletion.
 
 Do not model this contract as a new shell state machine. Keep publication
 mechanical and put release-policy explanations in Markdown. Validate any

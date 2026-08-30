@@ -24,7 +24,17 @@ case "$*" in
   "storage objects describe gs://test-bucket/widget/.publish.lock --format=value(generation,update_time)")
     printf '12345\t2026-01-01T00:00:00+0000\n'
     ;;
-  "storage rsync --recursive --checksums-only gs://test-bucket/widget "*)
+  "storage rsync --recursive --delete-unmatched-destination-objects gs://test-bucket/widget "*)
+    stage_dir="$6"
+    find "$stage_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+    mkdir -p \
+      "$stage_dir/by-hash/SHA256" \
+      "$stage_dir/dists/bookworm" \
+      "$stage_dir/legacy"
+    printf 'existing dependency\n' >"$stage_dir/dependency-2.0.0-1.x86_64.rpm"
+    printf 'immutable index\n' >"$stage_dir/by-hash/SHA256/existing"
+    printf 'mutable release metadata\n' >"$stage_dir/dists/bookworm/Release"
+    printf 'mutable extension metadata\n' >"$stage_dir/legacy/channel.json"
     ;;
   "storage rsync --recursive --checksums-only --cache-control=asset-contract "*)
     test "${CLOUDSDK_STORAGE_PROCESS_COUNT:-}" = "1"
@@ -34,7 +44,7 @@ case "$*" in
       relative_path="${asset_file#"$asset_dir"/}"
       printf 'ASSET %s\n' "$relative_path" >>"$log_file"
       case "$relative_path" in
-        *.deb|*.rpm|*.apk)
+        *.deb|*.rpm|*.apk|by-hash/*|*/by-hash/*)
           ;;
         *)
           printf 'Non-asset path was included in the asset rsync: %s\n' "$relative_path" >&2
@@ -127,13 +137,13 @@ PATH="$tmp/bin:$PATH" \
   bash "$repo_root/scripts/publish-package-repo.sh" >"$publisher_log" 2>&1
 
 grep -Fq "storage rsync --recursive --checksums-only --cache-control=asset-contract " "$gcloud_log"
-grep -Fq "ASSET widget-x86_64.rpm" "$gcloud_log"
-grep -Fq "ASSET rpm/widget-x86_64.rpm" "$gcloud_log"
-
-grep -Fq "storage rsync --recursive --checksums-only gs://test-bucket/widget " "$gcloud_log"
-grep -Fq "storage rsync --recursive --checksums-only --delete-unmatched-destination-objects" "$gcloud_log"
+grep -Fq "ASSET dependency-2.0.0-1.x86_64.rpm" "$gcloud_log"
+grep -Fq "ASSET widget-1.0.0-1.x86_64.rpm" "$gcloud_log"
+grep -Fq "ASSET by-hash/SHA256/existing" "$gcloud_log"
 
 for metadata_path in \
+  "dists/bookworm/Release" \
+  "legacy/channel.json" \
   "rpm/repodata/primary.xml.gz" \
   "rpm/repodata/repomd.xml" \
   "rpm/repodata/repomd.xml.asc" \
