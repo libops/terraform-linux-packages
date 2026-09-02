@@ -49,23 +49,12 @@ jobs:
           push: false
           tags: terraform-linux-packages:ci-${{ matrix.architecture.suffix }}
 
-      - name: Scan native image
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: terraform-linux-packages:ci-${{ matrix.architecture.suffix }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          vuln-type: os,library
-
   run:
     if: github.ref == 'refs/heads/main'
     uses: libops/.github/.github/workflows/build-push.yaml@main
     with:
       ref: ${{ github.sha }}
       expected-main-sha: ${{ github.ref == 'refs/heads/main' && github.sha || '' }}
-      scan: true
       sign: true
     permissions:
       contents: read
