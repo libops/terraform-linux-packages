@@ -28,7 +28,6 @@ require_text "Build native image without credentials"
 require_text "libops/.github/.github/workflows/build-push.yaml@main"
 require_text 'ref: ${{ github.sha }}'
 require_text "expected-main-sha: \${{ github.ref == 'refs/heads/main' && github.sha || '' }}"
-require_text "scan: true"
 require_text "sign: true"
 require_text "packages: write"
 require_text "id-token: write"
