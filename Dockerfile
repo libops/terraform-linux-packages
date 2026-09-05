@@ -1,4 +1,4 @@
-FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:slim@sha256:288bee65409ada9168944d1af8050247b556f8c0aeef97a3889ea05ee6294d7c AS build
+FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:slim@sha256:87eaf69da735ab8dfc1c640df1e85a467a4feedf2256d35dad368f970d9cd35f AS build
 
 RUN apt-get update \
   && apt-get upgrade -y \
