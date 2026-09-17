@@ -90,7 +90,7 @@ jobs:
           distribution: goreleaser
           # Keep source-release and cross-repository publication credentials
           # independently scoped.
-          version: v2.17.0
+          version: v2.18.2
           args: ${{ inputs.goreleaser-args }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
